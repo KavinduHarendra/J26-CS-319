@@ -3,11 +3,13 @@ scripts/run_baseline_demo.py — Normal RF Baseline Calibration Demo (70/30 Spli
 
 Fetches synthetic normal observations through SyntheticDataSource (RFDataSource),
 splits them 70/30 into a calibration set and a held-out evaluation set, calibrates
-NormalBaseline on the 70% split, and prints z-scores and deviations for 5 sample
+NormalBaseline on the 70% split, validates Gaussian distribution assumptions via the
+Shapiro-Wilk normality check, and prints z-scores and deviations for 5 sample
 observations from the 30% held-out split.
 
 Per Section 3.10 of the Implementation Guide: calibration data and evaluation data
 MUST be separate to avoid testing on the same data used for baselining.
+Per Section 13.4: features failing the normality check should switch to robust_z_score().
 
 Usage:
     python scripts/run_baseline_demo.py [--samples 200] [--seed 42]
@@ -23,6 +25,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data_source import RFDataSource, SyntheticDataSource
 from src.baseline import NormalBaseline
+from src.normality_check import check_normality
 
 
 def run_baseline_demo(data_source: RFDataSource, total_samples: int = 200) -> None:
@@ -57,6 +60,32 @@ def run_baseline_demo(data_source: RFDataSource, total_samples: int = 200) -> No
         fb = baseline.baseline[feature]
         unit = "dBm" if "rssi" in feature or "noise" in feature else ("dB" if "snr" in feature else "pkts/s")
         print(f"  {feature:<15}  {fb.mean:>10.4f}  {fb.std:>10.4f}  {unit:<6}  {len(calibration_set):>7}")
+
+    # Normality validation on the calibration split (Section 13.4)
+    print("\n--- Shapiro-Wilk Normality Check on Calibration Split (alpha=0.05) ---")
+    normality_results: dict[str, bool] = {}
+    for feature in NormalBaseline.FEATURES:
+        samples = [float(getattr(obs, feature)) for obs in calibration_set]
+        normality_results[feature] = check_normality(samples, feature, alpha=0.05)
+
+    print("\n  Summary of Normality Assumptions:")
+    print(f"  {'Feature':<15}  {'Status':<10}  {'Recommendation'}")
+    print("  " + "-" * 65)
+    for feature, passed in normality_results.items():
+        status = "PASSED" if passed else "FAILED"
+        rec = "Standard z-score appropriate" if passed else "Switch to robust_z_score() (median/MAD)"
+        print(f"  {feature:<15}  {status:<10}  {rec}")
+
+    # Section 13.4 Note regarding failed features
+    failed_features = [f for f, p in normality_results.items() if not p]
+    if failed_features:
+        print(f"\n  [NOTE] Features failing normality: {failed_features}.")
+        print("         Any feature that fails should have its z_scores() computation in")
+        print("         baseline.py switched to use robust_z_score() instead of the standard formula.")
+    else:
+        print("\n  [NOTE] All features passed the Shapiro-Wilk test (Gaussian assumption holds).")
+        print("         If any future feature fails normality, its z_scores() computation in")
+        print("         baseline.py should be switched to use robust_z_score() (Section 13.4).")
 
     # Show z-scores and deviations for 5 observations from the HELD-OUT 30% split
     demo_count = min(5, len(evaluation_set))
