@@ -122,8 +122,8 @@ class ThreatIntelligenceModule:
                 abnormal_features=anomaly_result["anomalous_features"],
                 statistical_deviation=anomaly_result["z_scores"],
                 evidence=[
-                    f"Significant deviation in {f} (z={anomaly_result['z_scores'][f]:.2f})"
-                    for f in anomaly_result["anomalous_features"]
+                    f"Significant deviation in {feature}"
+                    for feature in anomaly_result["anomalous_features"]
                 ],
             )
 
@@ -136,5 +136,5 @@ class ThreatIntelligenceModule:
             triggered_rule=None,
             abnormal_features=[],
             statistical_deviation=z_scores,
-            evidence=["No jamming rule triggered; feature values within baseline distribution"],
+            evidence=["No jamming rule triggered; within baseline deviation"],
         )
