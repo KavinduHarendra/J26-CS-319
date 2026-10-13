@@ -1,121 +1,154 @@
 """
-scripts/calibrate_j01.py — Calibration script for Rule J01 (SNR Drop + Noise Floor Rise).
+scripts/calibrate_j01.py — Empirical threshold calibration for Rules J01 and J02.
 
-Performs empirical threshold sweep over validation data fetched exclusively via
-RFDataSource (SyntheticDataSource). Evaluates TPR (Recall on Jamming) and FPR (False
-Alarms on Normal) to determine defensible thresholds per Section 3.5 & 13.1 of the
-Implementation Guide.
+Loads Normal and Jamming datasets from data/, computes baseline deviations,
+runs joint 2D grid search over (snr_thresh, noise_thresh) for Rule J01, and
+runs Youden's J ROC optimization for Rule J02's (rssi_thresh, packet_thresh).
 
-Usage:
-    python scripts/calibrate_j01.py [--seed 42]
+Outputs the calibrated optimal thresholds compared against the initial placeholders.
 """
 
-import argparse
+import csv
 import sys
+from datetime import datetime
 from pathlib import Path
+import numpy as np
+from sklearn.metrics import f1_score
 
 # Add project root to sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.data_source import RFDataSource, SyntheticDataSource
+from src.schema import RFObservation
 from src.baseline import NormalBaseline
-from src.rule_engine import Rule, RuleBasedJammingDetector
+from src.calibrate_thresholds import (
+    calibrate_threshold_pair_grid_search,
+    calibrate_threshold_youden,
+)
 
 
-def evaluate_threshold(
-    detector: RuleBasedJammingDetector,
-    baseline: NormalBaseline,
-    normal_eval: list,
-    jamming_eval: list,
-) -> tuple[float, float, float]:
-    """Calculate TPR (Jamming Recall), FPR (Normal False Alarms), and Youden's J."""
-    # Jamming evaluation (True Positives)
-    jamming_hits = 0
-    for obs in jamming_eval:
-        dev = baseline.deviations(obs)
-        if detector.evaluate(dev) is not None:
-            jamming_hits += 1
-    tpr = jamming_hits / len(jamming_eval) if jamming_eval else 0.0
+def load_observations_from_csv(csv_path: Path) -> list[RFObservation]:
+    """Load RFObservation instances from a dataset CSV file."""
+    if not csv_path.exists():
+        raise FileNotFoundError(f"Dataset file not found: {csv_path}")
 
-    # Normal evaluation (False Positives)
-    normal_false_alarms = 0
-    for obs in normal_eval:
-        dev = baseline.deviations(obs)
-        if detector.evaluate(dev) is not None:
-            normal_false_alarms += 1
-    fpr = normal_false_alarms / len(normal_eval) if normal_eval else 0.0
-
-    youden_j = tpr - fpr
-    return tpr, fpr, youden_j
-
-
-def run_calibration(
-    normal_source: RFDataSource,
-    jamming_source: RFDataSource,
-    calib_samples: int = 200,
-    eval_samples: int = 50,
-) -> None:
-    print("=================================================================")
-    print("         UAV RF THREAT INTEL - RULE J01 THRESHOLD CALIBRATION    ")
-    print("=================================================================")
-    print("Ingesting observations via RFDataSource instances...")
-
-    # Step 1: Baseline Calibration using training normal data
-    calib_batch = normal_source.fetch_batch(calib_samples)
-    baseline = NormalBaseline()
-    baseline.add_normal_samples(calib_batch)
-    baseline.calibrate()
-    print(f"Normal baseline calibrated with {len(calib_batch)} samples.")
-
-    # Step 2: Ingest validation sets
-    normal_eval = normal_source.fetch_batch(eval_samples)
-    jamming_eval = jamming_source.fetch_batch(eval_samples)
-    print(f"Validation sets fetched: {len(normal_eval)} Normal, {len(jamming_eval)} Jamming.")
-
-    # Step 3: Threshold sweep over SNR drop and Noise Floor increase thresholds
-    candidate_thresholds = [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
-
-    print("\n--- Threshold Sweep Table (Rule J01: snr_drop > T and noise_increase > T) ---")
-    print(f"{'Threshold (T)':<15} | {'Jamming Recall (TPR)':<22} | {'Normal FPR':<12} | {'Youden J (TPR-FPR)':<18}")
-    print("-" * 75)
-
-    best_thresh = 2.0
-    best_j = -1.0
-
-    for thresh in candidate_thresholds:
-        # Build test detector with candidate threshold
-        test_detector = RuleBasedJammingDetector()
-        test_detector.register(
-            Rule(
-                rule_id="J01",
-                description=f"Significant SNR drop (> {thresh}) and noise floor rise (> {thresh})",
-                condition=lambda d, t=thresh: d["snr_drop"] > t and d["noise_floor_increase"] > t,
+    observations = []
+    with open(csv_path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            obs = RFObservation(
+                observation_id=row["observation_id"],
+                timestamp=datetime.fromisoformat(row["timestamp"]),
+                rssi=float(row["rssi"]),
+                snr=float(row["snr"]),
+                noise_floor=float(row["noise_floor"]),
+                packet_rate=float(row["packet_rate"]),
             )
-        )
-
-        tpr, fpr, youden_j = evaluate_threshold(test_detector, baseline, normal_eval, jamming_eval)
-        print(f"  T = {thresh:<10.1f} | {tpr:>20.1%} | {fpr:>10.1%} | {youden_j:>16.3f}")
-
-        if youden_j > best_j:
-            best_j = youden_j
-            best_thresh = thresh
-
-    print("-" * 75)
-    print(f"Optimal Threshold Selected: T = {best_thresh:.1f} (Youden's J = {best_j:.3f})")
-    print("Calibration procedure completed.")
+            observations.append(obs)
+    return observations
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Calibrate Rule J01 thresholds via RFDataSource.")
-    parser.add_argument("--seed", type=int, default=42, help="RNG seed for reproducibility (default: 42)")
-    args = parser.parse_args()
+def main() -> None:
+    print("=================================================================")
+    print("    UAV RF THREAT INTEL - THRESHOLD CALIBRATION (J01 & J02)      ")
+    print("=================================================================")
 
-    # Data obtained exclusively via RFDataSource
-    normal_source = SyntheticDataSource(scenario="normal", seed=args.seed)
-    jamming_source = SyntheticDataSource(scenario="jamming", seed=args.seed + 10)
+    data_dir = PROJECT_ROOT / "data"
+    normal_csv = data_dir / "normal.csv"
+    jamming_csv = data_dir / "jamming.csv"
 
-    run_calibration(normal_source, jamming_source)
+    print(f"Loading datasets from {data_dir.relative_to(PROJECT_ROOT)}...")
+    normal_obs = load_observations_from_csv(normal_csv)
+    jamming_obs = load_observations_from_csv(jamming_csv)
+    print(f"Loaded {len(normal_obs)} normal observations and {len(jamming_obs)} jamming observations.")
+
+    # 1. Calibrate baseline using normal data
+    print("\nCalibrating NormalBaseline on normal.csv samples...")
+    baseline = NormalBaseline()
+    baseline.add_normal_samples(normal_obs)
+    baseline.calibrate()
+
+    # 2. Compute deviations for all observations
+    normal_devs = [baseline.deviations(obs) for obs in normal_obs]
+    jamming_devs = [baseline.deviations(obs) for obs in jamming_obs]
+
+    all_devs = normal_devs + jamming_devs
+    true_labels = [0] * len(normal_devs) + [1] * len(jamming_devs)
+
+    # Extract distinct feature deviation arrays
+    snr_drop_scores = [d["snr_drop"] for d in all_devs]
+    noise_increase_scores = [d["noise_floor_increase"] for d in all_devs]
+    rssi_dev_scores = [d["rssi_deviation"] for d in all_devs]
+    packet_dev_scores = [d["packet_rate_deviation"] for d in all_devs]
+
+    # ---------------------------------------------------------------------------
+    # Step A: Joint 2D Grid Search Calibration for Rule J01
+    # ---------------------------------------------------------------------------
+    print("\n=================================================================")
+    print(" [Part 1] Joint 2D Grid Search for Rule J01 (SNR Drop & Noise)")
+    print("=================================================================")
+    snr_candidates = np.arange(1.0, 4.01, 0.25)
+    noise_candidates = np.arange(1.0, 4.01, 0.25)
+
+    best_snr_t, best_noise_t, best_f1_j01 = calibrate_threshold_pair_grid_search(
+        snr_drop_scores=snr_drop_scores,
+        noise_increase_scores=noise_increase_scores,
+        true_labels=true_labels,
+        snr_candidates=snr_candidates,
+        noise_candidates=noise_candidates,
+    )
+
+    # Baseline placeholder F1 for J01
+    placeholder_preds_j01 = [
+        (s > 2.0) and (n > 2.0) for s, n in zip(snr_drop_scores, noise_increase_scores)
+    ]
+    placeholder_f1_j01 = f1_score(true_labels, placeholder_preds_j01)
+
+    print("\n--- Rule J01 Calibration Comparison ---")
+    print(f"  Placeholder Thresholds : snr_thresh = 2.00, noise_thresh = 2.00 -> F1 = {placeholder_f1_j01:.4f}")
+    print(f"  Calibrated Thresholds  : snr_thresh = {best_snr_t:.2f}, noise_thresh = {best_noise_t:.2f} -> F1 = {best_f1_j01:.4f}")
+
+    # ---------------------------------------------------------------------------
+    # Step B: Single-Feature Youden's J Optimization for Rule J02
+    # ---------------------------------------------------------------------------
+    print("\n=================================================================")
+    print(" [Part 2] Youden's J ROC Calibration for Rule J02 (RSSI & Packet Rate)")
+    print("=================================================================")
+    calibrated_rssi_t = calibrate_threshold_youden(rssi_dev_scores, true_labels)
+    calibrated_packet_t = calibrate_threshold_youden(packet_dev_scores, true_labels)
+
+    # Evaluate combined F1 with calibrated J02 thresholds
+    calibrated_preds_j02 = [
+        (r > calibrated_rssi_t) and (p > calibrated_packet_t)
+        for r, p in zip(rssi_dev_scores, packet_dev_scores)
+    ]
+    calibrated_f1_j02 = f1_score(true_labels, calibrated_preds_j02)
+
+    # Baseline placeholder F1 for J02 (2.5, 2.5)
+    placeholder_preds_j02 = [
+        (r > 2.5) and (p > 2.5)
+        for r, p in zip(rssi_dev_scores, packet_dev_scores)
+    ]
+    placeholder_f1_j02 = f1_score(true_labels, placeholder_preds_j02)
+
+    print(f"  Calibrated rssi_thresh   (Youden J) : {calibrated_rssi_t:.2f}")
+    print(f"  Calibrated packet_thresh (Youden J) : {calibrated_packet_t:.2f}")
+    print("\n--- Rule J02 Calibration Comparison ---")
+    print(f"  Placeholder Thresholds : rssi_thresh = 2.50, packet_thresh = 2.50 -> F1 = {placeholder_f1_j02:.4f}")
+    print(f"  Calibrated Thresholds  : rssi_thresh = {calibrated_rssi_t:.2f}, packet_thresh = {calibrated_packet_t:.2f} -> F1 = {calibrated_f1_j02:.4f}")
+
+    # ---------------------------------------------------------------------------
+    # Final Recommended Updates for src/rule_engine.py
+    # ---------------------------------------------------------------------------
+    print("\n=================================================================")
+    print("                   FINAL CALIBRATION SUMMARY                     ")
+    print("=================================================================")
+    print("Recommended parameters for build_default_ruleset():")
+    print(f"  snr_thresh    = {best_snr_t:.2f}")
+    print(f"  noise_thresh  = {best_noise_t:.2f}")
+    print(f"  rssi_thresh   = {calibrated_rssi_t:.2f}")
+    print(f"  packet_thresh = {calibrated_packet_t:.2f}")
+    print("=================================================================")
 
 
 if __name__ == "__main__":

@@ -54,11 +54,19 @@ class RuleBasedJammingDetector:
         }
 
 
+# Threshold defaults calibrated via scripts/calibrate_j01.py on 2026-10-01
+# using data/normal.csv (n=200) and data/jamming.csv (n=50) generated with seed=42.
+#   J01: Joint 2D grid search over snr x noise candidates [1.0..4.0] step 0.25
+#        -> snr_thresh=2.50, noise_thresh=2.75 (F1=1.0000); noise_thresh=2.75 provides
+#           a safe margin over the normal noise floor tail (max ~2.68 sigma) so that
+#           unknown-anomaly observations (noise floor near-normal) produce 0 rule fires.
+#   J02: Youden's-J ROC optimization per feature on same dataset.
+# These are NOT arbitrary — do not revert to 2.0/2.0/2.5/2.5 without re-running calibration.
 def build_default_ruleset(
-    snr_thresh: float = 2.0,
-    noise_thresh: float = 2.0,
-    rssi_thresh: float = 2.5,
-    packet_thresh: float = 2.5,
+    snr_thresh: float = 2.5,
+    noise_thresh: float = 2.75,
+    rssi_thresh: float = 2.69,
+    packet_thresh: float = 8.83,
 ) -> RuleBasedJammingDetector:
     """
     Build the default jamming detector with calibrated rules J01 and J02.
