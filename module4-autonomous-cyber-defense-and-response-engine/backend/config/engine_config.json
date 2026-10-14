@@ -1,0 +1,23 @@
+{
+  "source_weights": {
+    "rf": 0.40,
+    "ai": 0.25,
+    "communication": 0.25,
+    "history": 0.10
+  },
+  "severity_thresholds": {
+    "LOW": [0, 24],
+    "MEDIUM": [25, 49],
+    "HIGH": [50, 74],
+    "CRITICAL": [75, 100]
+  },
+  "forecast": {
+    "escalating_slope": 2.0,
+    "improving_slope": -2.0,
+    "horizons_minutes": [5, 10, 15]
+  },
+  "conflict": {
+    "minimum_source_gap": 45,
+    "confidence_penalty": 0.25
+  }
+}
