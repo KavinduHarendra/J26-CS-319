@@ -13,7 +13,12 @@ Covers:
 import pytest
 from datetime import datetime, timezone
 
-from src.baseline import NormalBaseline, FeatureBaseline
+from src.baseline import (
+    BaselineIntegrityError,
+    NormalBaseline,
+    FeatureBaseline,
+    UnsafeBaselineSampleError,
+)
 from src.schema import RFObservation
 from src.data_source import SyntheticDataSource
 
@@ -328,3 +333,61 @@ class TestBaselineWithSyntheticDataSource:
         assert calib_ids.isdisjoint(eval_ids)
         assert len(calib_ids) == 70
         assert len(eval_ids) == 30
+
+
+class TestBaselinePersistenceIntegrity:
+    def test_json_round_trip_with_sha256_sidecar(self, known_baseline, tmp_path):
+        path = tmp_path / "baseline.json"
+
+        known_baseline.save_baseline(path)
+        loaded = NormalBaseline.load_baseline(path)
+
+        assert path.exists()
+        assert (tmp_path / "baseline.json.sha256").exists()
+        assert loaded.calibrated is True
+        assert loaded.version == NormalBaseline.FORMAT_VERSION
+        assert loaded.created_at == known_baseline.created_at
+        for feature in NormalBaseline.FEATURES:
+            assert loaded.baseline[feature] == known_baseline.baseline[feature]
+
+    def test_tampered_json_is_rejected(self, known_baseline, tmp_path):
+        path = tmp_path / "baseline.json"
+        known_baseline.save_baseline(path)
+        path.write_text(path.read_text(encoding="utf-8") + " ", encoding="utf-8")
+
+        with pytest.raises(BaselineIntegrityError, match="SHA-256 verification failed"):
+            NormalBaseline.load_baseline(path)
+
+    def test_tampered_hash_sidecar_is_rejected(self, known_baseline, tmp_path):
+        path = tmp_path / "baseline.json"
+        known_baseline.save_baseline(path)
+        path.with_suffix(".json.sha256").write_text("0" * 64 + "\n", encoding="ascii")
+
+        with pytest.raises(BaselineIntegrityError, match="SHA-256 verification failed"):
+            NormalBaseline.load_baseline(path)
+
+    def test_uncalibrated_baseline_cannot_be_saved(self, tmp_path):
+        with pytest.raises(RuntimeError, match="uncalibrated"):
+            NormalBaseline().save_baseline(tmp_path / "baseline.json")
+
+
+class TestBaselinePoisoningProtection:
+    @pytest.mark.parametrize("classification", ["Jamming", "Unknown Anomaly"])
+    def test_refuses_threat_samples(self, classification):
+        baseline = NormalBaseline()
+
+        with pytest.raises(UnsafeBaselineSampleError, match="Refusing"):
+            baseline.add_classified_sample(
+                _make_obs(-60.0, 25.0, -90.0, 100.0),
+                classification,
+            )
+
+        assert all(not samples for samples in baseline._samples.values())
+
+    def test_accepts_explicitly_normal_sample(self):
+        baseline = NormalBaseline()
+        baseline.add_classified_sample(
+            _make_obs(-60.0, 25.0, -90.0, 100.0),
+            "Normal",
+        )
+        assert all(len(samples) == 1 for samples in baseline._samples.values())
