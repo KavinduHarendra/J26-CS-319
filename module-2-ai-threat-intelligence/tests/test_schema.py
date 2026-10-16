@@ -9,7 +9,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.schema import RFObservation
+from src.schema import (
+    InvalidObservationError,
+    PLAUSIBLE_RANGES,
+    RFObservation,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -136,3 +140,64 @@ class TestRFObservationEquality:
             packet_rate=10.0,
         )
         assert sample_observation != different
+
+
+class TestRFObservationValidation:
+    """Untrusted values must be rejected before they reach detection logic."""
+
+    def _values(self, **overrides):
+        values = {
+            "observation_id": "obs-valid",
+            "timestamp": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "rssi": -60.0,
+            "snr": 25.0,
+            "noise_floor": -90.0,
+            "packet_rate": 100.0,
+        }
+        values.update(overrides)
+        return values
+
+    @pytest.mark.parametrize("observation_id", ["", "   ", 123, "x" * 65])
+    def test_rejects_invalid_observation_id(self, observation_id):
+        with pytest.raises(InvalidObservationError):
+            RFObservation(**self._values(observation_id=observation_id))
+
+    def test_rejects_non_datetime_timestamp(self):
+        with pytest.raises(InvalidObservationError, match="timestamp"):
+            RFObservation(**self._values(timestamp="2026-01-01T00:00:00Z"))
+
+    @pytest.mark.parametrize("field", ["rssi", "snr", "noise_floor", "packet_rate"])
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), None, True, "12.5"])
+    def test_rejects_non_finite_or_non_real_measurements(self, field, value):
+        with pytest.raises(InvalidObservationError, match=field):
+            RFObservation(**self._values(**{field: value}))
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("rssi", -140.1),
+            ("rssi", 0.1),
+            ("snr", -40.1),
+            ("snr", 80.1),
+            ("noise_floor", -150.1),
+            ("noise_floor", -19.9),
+            ("packet_rate", -0.1),
+            ("packet_rate", 1_000_000.1),
+        ],
+    )
+    def test_rejects_values_outside_plausibility_bounds(self, field, value):
+        with pytest.raises(InvalidObservationError, match="plausible range"):
+            RFObservation(**self._values(**{field: value}))
+
+    def test_bounds_are_configurable_per_radio(self, monkeypatch):
+        monkeypatch.setitem(PLAUSIBLE_RANGES, "rssi", (-80.0, -40.0))
+        with pytest.raises(InvalidObservationError, match="rssi"):
+            RFObservation(**self._values(rssi=-90.0))
+
+    def test_default_boundaries_are_inclusive(self):
+        RFObservation(**self._values(
+            rssi=-140.0,
+            snr=80.0,
+            noise_floor=-150.0,
+            packet_rate=1_000_000.0,
+        ))
