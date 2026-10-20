@@ -8,7 +8,7 @@ structured list of reasons for display in the dashboard.
 from models.module1 import RFContext
 from models.module2 import ThreatIntelligence
 from models.module3 import SecureCommunication
-from models.defense import RiskBreakdown, CorrelationResult, ConflictResult, TrendWindow
+from models.defense import RiskBreakdown, CorrelationResult, ConflictResult
 
 
 def build_reasons(
@@ -20,7 +20,6 @@ def build_reasons(
     breakdown: RiskBreakdown,
     correlation: CorrelationResult,
     conflict: ConflictResult,
-    trend_window: TrendWindow,
     confidence_level: str,
     response: str,
 ) -> list[str]:
@@ -76,8 +75,7 @@ def build_reasons(
     # ── Correlation ──
     if correlation.correlated_risk_boost > 0:
         reasons.append(
-            f"Multi-source correlation: evidence from Modules 2 and 3 is mutually "
-            f"reinforcing (+{correlation.correlated_risk_boost} correlation boost)"
+            "The evidence alignment indicator is context only; it does not add risk points"
         )
     reasons.append(f"Correlation analysis: {correlation.correlation_note}")
 
@@ -86,21 +84,11 @@ def build_reasons(
         reasons.append(f"⚠ EVIDENCE CONFLICT DETECTED: {conflict.conflict_reason}")
         reasons.append("Decision confidence reduced due to conflicting evidence")
 
-    # ── Trend ──
-    if trend_window.trend == "INSUFFICIENT_DATA":
-        reasons.append("Trend: insufficient observation history — trend analysis pending")
-    else:
-        scores_str = " → ".join(str(s) for s in trend_window.scores)
-        reasons.append(
-            f"Short-term risk trend: {trend_window.trend} "
-            f"(window: {scores_str}, slope: {trend_window.slope}/observation)"
-        )
-
     # ── Confidence ──
     reasons.append(f"Decision confidence assessed as: {confidence_level}")
 
     # ── Final response ──
-    reasons.append(f"Recommended response selected: {response} (SIMULATED — no real UAV control)")
+    reasons.append(f"Recommended response selected: {response} (RECOMMENDATION ONLY — no action executed)")
 
     return reasons
 
@@ -112,7 +100,6 @@ def build_pipeline_stages() -> list[str]:
         "DATA NORMALIZATION",
         "MULTI-SOURCE EVIDENCE CORRELATION",
         "DYNAMIC RISK SCORING",
-        "SHORT-TERM THREAT TREND ANALYSIS",
         "DECISION CONFIDENCE / UNCERTAINTY HANDLING",
         "RESPONSE PRIORITIZATION",
         "EXPLAINABLE DECISION",

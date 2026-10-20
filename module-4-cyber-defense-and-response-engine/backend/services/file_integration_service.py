@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import UploadFile
+from pydantic import ValidationError
 
 from models.defense import EvaluateRequest
 from models.module1 import RFContext
@@ -78,19 +79,22 @@ def _module2(payload: dict[str, Any]) -> tuple[dict[str, Any], datetime]:
     # it as nullable and the HCRDM scorer assigns no severity points in that case.
     _required(payload, ("observation_id", "timestamp", "classification"), source)
     timestamp = _timestamp(payload["timestamp"], source)
-    if payload["classification"] not in {"Normal", "Jamming", "Unknown Anomaly"}:
+    if not isinstance(payload["classification"], str) or payload["classification"] not in {"Normal", "Jamming", "Unknown Anomaly"}:
         raise IntegrationValidationError(source, "INVALID_CLASSIFICATION", "Module 2 classification is not supported.", "classification")
     severity = payload.get("severity")
-    if severity not in {"Low", "Medium", "High", None}:
+    if severity is not None and (not isinstance(severity, str) or severity not in {"Low", "Medium", "High"}):
         raise IntegrationValidationError(source, "INVALID_SEVERITY", "Module 2 severity is not supported.", "severity")
     payload["severity"] = severity
+    for field in ("rf_context", "statistical_deviation"):
+        if payload.get(field) is not None and not isinstance(payload[field], dict):
+            raise IntegrationValidationError(source, "INVALID_FIELD_VALUE", f"Module 2 {field} must be an object.", field)
     return payload, timestamp
 
 
 def _module3(payload: dict[str, Any]) -> tuple[dict[str, Any], datetime | None]:
     source = "MODULE_3"
-    _required(payload, ("link_state",), source)
-    if payload["link_state"] not in {"TRUSTED", "DEGRADED", "SUSPICIOUS", "UNTRUSTED"}:
+    _required(payload, ("link_state", "freshness_state", "auth_state", "integrity_state", "replay_detected"), source)
+    if not isinstance(payload["link_state"], str) or payload["link_state"] not in {"TRUSTED", "DEGRADED", "SUSPICIOUS", "UNTRUSTED"}:
         raise IntegrationValidationError(source, "INVALID_LINK_STATE", "Module 3 link_state is not supported.", "link_state")
     timestamp = _timestamp(payload["timestamp"], source) if payload.get("timestamp") is not None else None
     for field, values, code in (
@@ -98,7 +102,7 @@ def _module3(payload: dict[str, Any]) -> tuple[dict[str, Any], datetime | None]:
         ("auth_state", {"VALID", "SUSPICIOUS", "INVALID"}, "INVALID_AUTH_STATE"),
         ("integrity_state", {"VALID", "SUSPICIOUS", "INVALID"}, "INVALID_INTEGRITY_STATE"),
     ):
-        if payload.get(field) is not None and payload[field] not in values:
+        if not isinstance(payload[field], str) or payload[field] not in values:
             raise IntegrationValidationError(source, code, f"Module 3 {field} is not supported.", field)
     return payload, timestamp
 
@@ -119,23 +123,53 @@ async def build_request(module2_file: UploadFile, module3_file: UploadFile) -> t
     if not id3:
         if timestamp3 is None:
             raise IntegrationValidationError("INTEGRATION", "TIMESTAMP_MISMATCH", "Module 3 needs timestamp when observation_id is absent.")
+        if (timestamp2.utcoffset() is None) != (timestamp3.utcoffset() is None):
+            raise IntegrationValidationError(
+                "INTEGRATION", "TIMESTAMP_TIMEZONE_MISMATCH",
+                "Both timestamps must include timezone offsets, or both must omit them. No timezone is assumed.",
+                "timestamp",
+            )
         delta = abs((timestamp2 - timestamp3).total_seconds())
         if delta > TIMESTAMP_THRESHOLD_SECONDS:
             raise IntegrationValidationError("INTEGRATION", "TIMESTAMP_MISMATCH", f"Module timestamps differ by {delta:.1f}s; maximum is {TIMESTAMP_THRESHOLD_SECONDS}s.")
         match_method = "timestamp_fallback"
 
+    try:
+        return _normalize_request(module2, module3, id2), {
+            "integration_mode": "FILE",
+            "match_method": match_method,
+            "module2_file": module2_file.filename or "module2.json",
+            "module3_file": module3_file.filename or "module3.json",
+        }
+    except ValidationError as exc:
+        error = exc.errors()[0]
+        field = ".".join(str(part) for part in error["loc"])
+        raise IntegrationValidationError(
+            "INTEGRATION", "INVALID_FIELD_VALUE", error["msg"], field
+        ) from exc
+
+
+def _normalize_request(module2: dict, module3: dict, observation_id: str) -> EvaluateRequest:
+    """Use the same typed contracts as manual evaluation; no alternate scoring."""
     deviation = module2.get("statistical_deviation") or {}
-    request = EvaluateRequest(
+    rf_context = module2.get("rf_context") or {}
+    return EvaluateRequest(
         rf_context=RFContext(
-            observation_id=id2,
+            observation_id=observation_id,
             timestamp=module2["timestamp"],
-            rssi=deviation.get("rssi"),
-            snr=deviation.get("snr"),
-            noise_floor=deviation.get("noise_floor"),
-            packet_rate=deviation.get("packet_rate"),
+            # Deviation values are z-scores, not physical RF measurements.
+            # Keep them in Module 2 evidence; raw measurements come from RF context.
+            rssi=rf_context.get("rssi"),
+            snr=rf_context.get("snr"),
+            noise_floor=rf_context.get("noise_floor"),
+            packet_rate=rf_context.get("packet_rate"),
+            **{field: rf_context[field] for field in (
+                "frequency_mhz", "bandwidth_mhz", "packet_loss_pct", "latency_ms"
+            ) if field in rf_context},
         ),
         threat_intelligence=ThreatIntelligence(
             classification=module2["classification"],
+            threat_confidence=module2.get("threat_confidence"),
             severity=module2["severity"],
             triggered_rule=module2.get("triggered_rule"),
             abnormal_features=module2.get("abnormal_features") or [],
@@ -147,15 +181,8 @@ async def build_request(module2_file: UploadFile, module3_file: UploadFile) -> t
             freshness_state=module3.get("freshness_state", "FRESH"),
             auth_state=module3.get("auth_state", "VALID"),
             integrity_state=module3.get("integrity_state", "VALID"),
-            replay_detected=bool(module3.get("replay_detected", False)),
+            replay_detected=module3["replay_detected"],
             comm_decision=module3.get("comm_decision"),
             link_evidence=module3.get("link_evidence") or [],
         ),
     )
-    metadata = {
-        "integration_mode": "FILE",
-        "match_method": match_method,
-        "module2_file": module2_file.filename or "module2.json",
-        "module3_file": module3_file.filename or "module3.json",
-    }
-    return request, metadata

@@ -1,68 +1,18 @@
-import type {
-  FullAnalysis, Incident, SimulateResult, ThreatInput, UAVStatus,
-  EvaluateRequest, EvaluateResponse, EvaluateScenario,
-} from './types'
-import * as demo from './demoEngine'
+import type { EvaluateRequest, EvaluateResponse, EvaluateScenario } from './types'
 
 const BASE = '/api'
-
 async function remote<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(`${BASE}${path}`, init)
-  if (!r.ok) throw new Error(`HTTP ${r.status}`)
-  return r.json()
+  const response = await fetch(`${BASE}${path}`, init)
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    const detail = body?.detail
+    const message = Array.isArray(detail)
+      ? detail.map((error: { loc?: string[]; msg?: string }) => `${error.loc?.slice(1).join('.')}: ${error.msg}`).join('; ')
+      : typeof detail === 'string' ? detail : `Request failed (HTTP ${response.status}). Check your inputs and backend connection.`
+    throw new Error(message)
+  }
+  return response.json()
 }
-
-// ─── Legacy API (ThreatSimulation page) ───────────────────────────────────────
-
-export const fetchScenarios = () => remote('/scenarios')
-
-export async function fetchScenario(id: string): Promise<{ scenario: ThreatInput }> {
-  try { return await remote(`/scenarios/${id}`) } catch { return demo.scenario(id) }
-}
-
-export async function analyzeThreat(data: ThreatInput): Promise<FullAnalysis> {
-  try {
-    return await remote('/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-  } catch { return demo.analyze(data) }
-}
-
-type ResponsePayload = {
-  uav_id: string; threat_type: string; threat_score: number; severity: string
-  forecast_trend: string; primary_response: string; primary_actions: string[]
-  before_evidence: Record<string, number | string>; simulated_response_outcome?: string
-}
-
-export async function simulateResponse(p: ResponsePayload): Promise<SimulateResult> {
-  try {
-    return await remote('/simulate-response', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) })
-  } catch { return demo.simulate(p) }
-}
-
-export async function fetchUAVStatus(): Promise<{ status: UAVStatus }> {
-  try { return await remote('/uav-status') } catch { return demo.status() }
-}
-
-export async function fetchIncidents(): Promise<{ incidents: Incident[] }> {
-  try { return await remote('/incidents') } catch { return demo.logs() }
-}
-
-export async function resetSimulation() {
-  try { return await remote('/reset', { method: 'POST' }) } catch { return demo.reset() }
-}
-
-type PriorityResult = {
-  primary_threat: { uav_id: string; threat_type: string; score: number; severity: string }
-  secondary_threats: { uav_id: string; threat_type: string; score: number; severity: string }[]
-  reason: string
-}
-
-export async function prioritizeThreats(threats: ThreatInput[]): Promise<PriorityResult> {
-  try {
-    return await remote<PriorityResult>('/prioritize-threats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ threats }) })
-  } catch { return demo.prioritize(threats) }
-}
-
-// ─── Module 4 Evaluate API ────────────────────────────────────────────────────
 
 export async function evaluateThreat(request: EvaluateRequest): Promise<EvaluateResponse> {
   return remote('/evaluate', {
@@ -100,7 +50,7 @@ export async function fetchEvaluateIncidents(limit = 50): Promise<{ incidents: R
   return remote(`/evaluate/incidents?limit=${limit}`)
 }
 
-export async function fetchRiskHistory(): Promise<{ history: Record<string, unknown>[]; current_window: number[] }> {
+export async function fetchRiskHistory(): Promise<{ history: Record<string, unknown>[] }> {
   return remote('/evaluate/risk-history')
 }
 

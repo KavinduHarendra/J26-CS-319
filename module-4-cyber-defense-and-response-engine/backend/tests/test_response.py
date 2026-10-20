@@ -6,7 +6,6 @@ Tests that the response engine:
   - Selects PREPARE_BACKUP_CHANNEL for Jamming + DEGRADED
   - Selects OPERATOR_ESCALATION for Unknown + SUSPICIOUS
   - Selects OPERATOR_ESCALATION for Normal + UNTRUSTED (conflict)
-  - Upgrades response when trend is ESCALATING
   - Baseline ignores communication state
 """
 
@@ -37,14 +36,14 @@ def test_replay_always_secure_hold():
     """Any replay → SECURE_HOLD regardless of classification."""
     for cls in ("Normal", "Jamming", "Unknown Anomaly"):
         sc = _make_sc("TRUSTED", "REPLAY", replay=True)
-        response, _, _ = select_response(_make_ti(cls), sc, 0.0, "STABLE", _no_conflict())
+        response, _, _ = select_response(_make_ti(cls), sc, 0.0, _no_conflict())
         assert response == "SECURE_HOLD", f"Expected SECURE_HOLD for replay ({cls}), got {response}"
 
 
 def test_jamming_untrusted_secure_hold():
     """Jamming + UNTRUSTED → SECURE_HOLD."""
     response, _, _ = select_response(
-        _make_ti("Jamming", "High"), _make_sc("UNTRUSTED"), 80.0, "STABLE", _no_conflict()
+        _make_ti("Jamming", "High"), _make_sc("UNTRUSTED"), 80.0, _no_conflict()
     )
     assert response == "SECURE_HOLD", f"Expected SECURE_HOLD, got {response}"
 
@@ -52,7 +51,7 @@ def test_jamming_untrusted_secure_hold():
 def test_jamming_degraded_prepare_backup():
     """Jamming + DEGRADED → PREPARE_BACKUP_CHANNEL."""
     response, _, _ = select_response(
-        _make_ti("Jamming", "High"), _make_sc("DEGRADED"), 80.0, "STABLE", _no_conflict()
+        _make_ti("Jamming", "High"), _make_sc("DEGRADED"), 80.0, _no_conflict()
     )
     assert response == "PREPARE_BACKUP_CHANNEL", f"Expected PREPARE_BACKUP_CHANNEL, got {response}"
 
@@ -60,7 +59,7 @@ def test_jamming_degraded_prepare_backup():
 def test_unknown_suspicious_operator_escalation():
     """Unknown Anomaly + SUSPICIOUS → OPERATOR_ESCALATION."""
     response, _, _ = select_response(
-        _make_ti("Unknown Anomaly"), _make_sc("SUSPICIOUS"), 45.0, "STABLE", _no_conflict()
+        _make_ti("Unknown Anomaly"), _make_sc("SUSPICIOUS"), 45.0, _no_conflict()
     )
     assert response == "OPERATOR_ESCALATION", f"Expected OPERATOR_ESCALATION, got {response}"
 
@@ -68,7 +67,7 @@ def test_unknown_suspicious_operator_escalation():
 def test_normal_untrusted_operator_escalation():
     """Normal RF + UNTRUSTED link → OPERATOR_ESCALATION (conflict case)."""
     response, _, _ = select_response(
-        _make_ti("Normal"), _make_sc("UNTRUSTED"), 35.0, "STABLE", _no_conflict()
+        _make_ti("Normal"), _make_sc("UNTRUSTED"), 35.0, _no_conflict()
     )
     assert response == "OPERATOR_ESCALATION", f"Expected OPERATOR_ESCALATION, got {response}"
 
@@ -76,7 +75,7 @@ def test_normal_untrusted_operator_escalation():
 def test_normal_trusted_monitor():
     """Normal + TRUSTED → MONITOR."""
     response, _, _ = select_response(
-        _make_ti("Normal"), _make_sc("TRUSTED"), 0.0, "STABLE", _no_conflict()
+        _make_ti("Normal"), _make_sc("TRUSTED"), 0.0, _no_conflict()
     )
     assert response == "MONITOR", f"Expected MONITOR, got {response}"
 
@@ -84,29 +83,18 @@ def test_normal_trusted_monitor():
 def test_unknown_trusted_increase_monitoring():
     """Unknown Anomaly + TRUSTED → INCREASE_MONITORING."""
     response, _, _ = select_response(
-        _make_ti("Unknown Anomaly"), _make_sc("TRUSTED"), 20.0, "STABLE", _no_conflict()
+        _make_ti("Unknown Anomaly"), _make_sc("TRUSTED"), 20.0, _no_conflict()
     )
     assert response == "INCREASE_MONITORING", f"Expected INCREASE_MONITORING, got {response}"
-
-
-def test_escalating_trend_upgrades_response():
-    """ESCALATING trend should upgrade the response."""
-    # MONITOR → INCREASE_MONITORING
-    response, _, _ = select_response(
-        _make_ti("Normal"), _make_sc("TRUSTED"), 0.0, "ESCALATING", _no_conflict()
-    )
-    assert response == "INCREASE_MONITORING", (
-        f"Expected upgrade from MONITOR to INCREASE_MONITORING, got {response}"
-    )
 
 
 def test_baseline_ignores_link_state():
     """Baseline should give same response regardless of link state."""
     _, _, baseline_trusted = select_response(
-        _make_ti("Jamming"), _make_sc("TRUSTED"), 35.0, "STABLE", _no_conflict()
+        _make_ti("Jamming"), _make_sc("TRUSTED"), 35.0, _no_conflict()
     )
     _, _, baseline_untrusted = select_response(
-        _make_ti("Jamming"), _make_sc("UNTRUSTED"), 70.0, "STABLE", _no_conflict()
+        _make_ti("Jamming"), _make_sc("UNTRUSTED"), 70.0, _no_conflict()
     )
     assert baseline_trusted == baseline_untrusted == "PREPARE_BACKUP_CHANNEL", (
         f"Baseline should be same regardless of link state: {baseline_trusted} vs {baseline_untrusted}"
@@ -134,7 +122,6 @@ if __name__ == "__main__":
         test_normal_untrusted_operator_escalation,
         test_normal_trusted_monitor,
         test_unknown_trusted_increase_monitoring,
-        test_escalating_trend_upgrades_response,
         test_baseline_ignores_link_state,
         test_compare_baseline_proposed_more_cautious,
         test_compare_baseline_same,

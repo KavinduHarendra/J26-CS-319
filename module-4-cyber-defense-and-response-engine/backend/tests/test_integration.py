@@ -13,14 +13,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from models.defense import EvaluateRequest
 from services.pipeline import run_pipeline
-from services import trend_service, audit_service
+from services import audit_service
 from data.evaluate_scenarios import EVALUATE_SCENARIOS
 
 
 def setup():
     """Reset state before integration tests."""
     audit_service.init_db()  # Ensure SQLite table exists
-    trend_service.reset_history()
     audit_service.clear_all()
 
 
@@ -29,7 +28,7 @@ try:
     import pytest
 
     @pytest.fixture(autouse=True)
-    def _reset():
+    def _reset(isolated_audit_database):
         setup()
 except ImportError:
     pass
@@ -116,12 +115,12 @@ def test_s9_escalating():
     assert response.risk_level == "CRITICAL", f"Expected CRITICAL, got {response.risk_level}"
 
 
-def test_response_always_simulated():
-    """All responses must carry SIMULATED status."""
+def test_response_always_recommended():
+    """All responses must carry RECOMMENDED status."""
     for sid in EVALUATE_SCENARIOS:
         response, _ = _run(sid)
-        assert response.response_status == "SIMULATED", (
-            f"Scenario {sid}: expected SIMULATED, got {response.response_status}"
+        assert response.response_status == "RECOMMENDED", (
+            f"Scenario {sid}: expected RECOMMENDED, got {response.response_status}"
         )
 
 
@@ -153,7 +152,7 @@ if __name__ == "__main__":
         test_s7_conflicting_evidence,
         test_s8_replay,
         test_s9_escalating,
-        test_response_always_simulated,
+        test_response_always_recommended,
         test_reasons_list_populated,
         test_baseline_differs_from_proposed_on_conflict_scenarios,
     ]

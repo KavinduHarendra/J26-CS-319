@@ -17,7 +17,6 @@ def assess_confidence(
     ti: ThreatIntelligence,
     sc: SecureCommunication,
     conflict: ConflictResult,
-    trend: str,
 ) -> ConfidenceResult:
     """Assess Module 4's decision confidence.
 
@@ -28,12 +27,10 @@ def assess_confidence(
     MEDIUM confidence conditions:
       - Unknown Anomaly with some supporting link degradation
       - Jamming with TRUSTED link (some conflict)
-      - Trend available (ESCALATING/IMPROVING)
 
     LOW confidence conditions:
       - Evidence conflict detected
       - Normal RF + UNTRUSTED link (major disagreement)
-      - INSUFFICIENT_DATA trend + ambiguous classification
     """
     classification = ti.classification
     link_state = sc.link_state
@@ -70,7 +67,9 @@ def assess_confidence(
                       "Communication-layer attack confirmed regardless of RF classification.",
         )
 
-    if classification == "Normal" and link_state == "TRUSTED" and not replay:
+    if (classification == "Normal" and link_state == "TRUSTED" and not replay
+            and sc.auth_state == "VALID" and sc.integrity_state == "VALID"
+            and sc.freshness_state == "FRESH" and ti.severity is None):
         return ConfidenceResult(
             level="HIGH",
             rationale="Module 2 reports Normal RF classification and Module 3 "
@@ -90,13 +89,6 @@ def assess_confidence(
             level="MEDIUM",
             rationale="Jamming detected by Module 2 but Module 3 reports TRUSTED link. "
                       "Partial evidence — communication unaffected may indicate false positive.",
-        )
-
-    if trend in ("ESCALATING", "IMPROVING"):
-        return ConfidenceResult(
-            level="MEDIUM",
-            rationale=f"Trend analysis shows {trend} risk pattern, "
-                      "providing additional temporal context for the decision.",
         )
 
     # Default: medium confidence for anything not explicitly classified

@@ -27,7 +27,7 @@ def _ti(classification="Normal", severity=None, rule=None) -> ThreatIntelligence
 
 def _sc(link="TRUSTED", fresh="FRESH", auth="VALID", integrity="VALID", replay=False) -> SecureCommunication:
     return SecureCommunication(
-        link_state=link, freshness_state=fresh,
+        link_state=link, freshness_state="REPLAY" if replay else fresh,
         auth_state=auth, integrity_state=integrity, replay_detected=replay
     )
 
@@ -85,7 +85,7 @@ def test_conflict_reduces_to_low_confidence():
     """Evidence conflict always reduces confidence to LOW."""
     from models.defense import ConflictResult
     conflict = ConflictResult(evidence_conflict=True, conflict_reason="Test conflict")
-    result = assess_confidence(_ti("Normal"), _sc("TRUSTED"), conflict, "STABLE")
+    result = assess_confidence(_ti("Normal"), _sc("TRUSTED"), conflict)
     assert result.level == "LOW"
 
 
@@ -94,7 +94,7 @@ def test_high_confidence_jamming_rule_degraded():
     from models.defense import ConflictResult
     no_conflict = ConflictResult(evidence_conflict=False)
     result = assess_confidence(
-        _ti("Jamming", "High", rule="J01"), _sc("DEGRADED"), no_conflict, "STABLE"
+        _ti("Jamming", "High", rule="J01"), _sc("DEGRADED"), no_conflict
     )
     assert result.level == "HIGH", f"Expected HIGH, got {result.level}: {result.rationale}"
 
@@ -103,7 +103,7 @@ def test_high_confidence_replay():
     """Replay = HIGH confidence."""
     from models.defense import ConflictResult
     no_conflict = ConflictResult(evidence_conflict=False)
-    result = assess_confidence(_ti("Normal"), _sc("TRUSTED", replay=True), no_conflict, "STABLE")
+    result = assess_confidence(_ti("Normal"), _sc("TRUSTED", replay=True), no_conflict)
     assert result.level == "HIGH", f"Expected HIGH for replay, got {result.level}"
 
 
@@ -111,7 +111,7 @@ def test_high_confidence_normal_trusted():
     """Normal + TRUSTED = HIGH confidence."""
     from models.defense import ConflictResult
     no_conflict = ConflictResult(evidence_conflict=False)
-    result = assess_confidence(_ti("Normal"), _sc("TRUSTED"), no_conflict, "STABLE")
+    result = assess_confidence(_ti("Normal"), _sc("TRUSTED"), no_conflict)
     assert result.level == "HIGH", f"Expected HIGH, got {result.level}"
 
 
@@ -119,7 +119,7 @@ def test_medium_confidence_unknown_degraded():
     """Unknown Anomaly + DEGRADED = MEDIUM confidence."""
     from models.defense import ConflictResult
     no_conflict = ConflictResult(evidence_conflict=False)
-    result = assess_confidence(_ti("Unknown Anomaly"), _sc("DEGRADED"), no_conflict, "STABLE")
+    result = assess_confidence(_ti("Unknown Anomaly"), _sc("DEGRADED"), no_conflict)
     assert result.level == "MEDIUM", f"Expected MEDIUM, got {result.level}"
 
 

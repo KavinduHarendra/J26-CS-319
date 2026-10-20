@@ -25,7 +25,7 @@ def _make_ti(classification="Normal", severity=None, rule=None) -> ThreatIntelli
 def _make_sc(link="TRUSTED", fresh="FRESH", auth="VALID", integrity="VALID", replay=False) -> SecureCommunication:
     return SecureCommunication(
         link_state=link, freshness_state=fresh,
-        auth_state=auth, integrity_state=integrity, replay_detected=replay
+        auth_state=auth, integrity_state=integrity, replay_detected=replay or fresh == "REPLAY"
     )
 
 

@@ -6,7 +6,7 @@ This schema defines the data contract flowing from Module 2 into Module 4.
 """
 
 from typing import Optional, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 ClassificationValue = Literal["Normal", "Jamming", "Unknown Anomaly"]
@@ -37,6 +37,12 @@ class ThreatIntelligence(BaseModel):
     - "Unknown Anomaly" → Abnormal but does NOT match known rule; treated conservatively
     """
 
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    threat_confidence: Optional[float] = Field(
+        default=None, ge=0, le=1,
+        description="Reported upstream threat confidence (0–1); retained for evidence and audit, not risk weighting"
+    )
     classification: ClassificationValue = Field(
         default="Normal",
         description="RF threat classification: Normal | Jamming | Unknown Anomaly"

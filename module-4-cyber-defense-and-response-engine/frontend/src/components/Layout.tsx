@@ -1,15 +1,15 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import {
   LayoutDashboard,
-  Radar,
+  FlaskConical,
   Shield,
   Zap,
 } from 'lucide-react'
 
 const nav = [
-  { to: '/', label: 'Evaluate — Module 4', icon: Zap },
-  { to: '/dashboard', label: 'UAV Dashboard', icon: LayoutDashboard },
-  { to: '/threat-simulation', label: 'Threat Simulation', icon: Radar },
+  { to: '/', label: 'Defense Evaluation', icon: Zap },
+  { to: '/defense-testing', label: 'Defense Testing', icon: FlaskConical },
+  { to: '/dashboard', label: 'Defense Dashboard', icon: LayoutDashboard },
 ]
 
 export default function Layout() {
@@ -22,9 +22,6 @@ export default function Layout() {
             <div>
               <span className="font-bold text-sm leading-tight block">
                 Autonomous Cyber Defense &amp; Response Engine
-              </span>
-              <span className="text-[10px] text-gray-600 block mt-0.5">
-                Module 4 · J26-CS-319 · SLIIT
               </span>
             </div>
           </div>
@@ -48,10 +45,6 @@ export default function Layout() {
             </NavLink>
           ))}
         </nav>
-        <div className="p-4 border-t border-gray-800 text-[10px] text-gray-600">
-          <p>T. H. Ranasinghe</p>
-          <p className="mt-0.5">Research Prototype v0.2 · PP1</p>
-        </div>
       </aside>
 
       <main className="flex-1 overflow-auto">

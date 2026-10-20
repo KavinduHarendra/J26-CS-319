@@ -2,7 +2,7 @@
 
 Stores every evaluated event as a complete audit record including:
 - All module inputs (RF context, threat intelligence, secure communication)
-- All Module 4 outputs (risk score, trend, confidence, conflict, response)
+- All Module 4 outputs (risk score, confidence, conflict, response)
 - Full explanation reasons
 - Timestamp and incident ID
 
@@ -12,6 +12,7 @@ but this implementation uses synchronous sqlite3 for simplicity.
 
 import json
 import sqlite3
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -37,7 +38,7 @@ def reset_counter() -> None:
 def init_db() -> None:
     """Create the incidents table if it does not exist."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(DB_PATH) as conn:
+    with closing(sqlite3.connect(DB_PATH)) as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS incidents (
                 incident_id     TEXT PRIMARY KEY,
@@ -83,6 +84,9 @@ def init_db() -> None:
             )
         """)
         conn.commit()
+        global _incident_counter
+        row = conn.execute("SELECT MAX(CAST(SUBSTR(incident_id, 5) AS INTEGER)) FROM incidents").fetchone()
+        _incident_counter = row[0] or 0
 
 
 def save_incident(response: EvaluateResponse) -> None:
@@ -91,7 +95,7 @@ def save_incident(response: EvaluateResponse) -> None:
     ti = response.module2_context
     sc = response.module3_context
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with closing(sqlite3.connect(DB_PATH)) as conn:
         conn.execute("""
             INSERT OR REPLACE INTO incidents VALUES (
                 ?, ?, ?,
@@ -127,7 +131,7 @@ def save_incident(response: EvaluateResponse) -> None:
 
             response.risk_score,
             response.risk_level,
-            response.trend,
+            None,  # Reserved legacy column; no temporal analysis is performed.
             response.decision_confidence,
             int(response.evidence_conflict),
             response.conflict_reason,
@@ -143,41 +147,42 @@ def save_incident(response: EvaluateResponse) -> None:
 
 
 def get_all_incidents(limit: int = 100) -> list[dict]:
-    """Fetch incidents from SQLite ordered by incident_id ascending (INC-0001 first)."""
+    """Return the latest limited records in chronological order for the dashboard."""
     if not DB_PATH.exists():
         return []
-    with sqlite3.connect(DB_PATH) as conn:
+    with closing(sqlite3.connect(DB_PATH)) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT * FROM incidents ORDER BY incident_id ASC LIMIT ?", (limit,)
+            "SELECT * FROM incidents ORDER BY timestamp DESC, "
+            "CAST(SUBSTR(incident_id, 5) AS INTEGER) DESC LIMIT ?", (limit,)
         ).fetchall()
-    return [dict(row) for row in rows]
+    return [{key: value for key, value in dict(row).items() if key != "trend"} for row in reversed(rows)]
 
 
 def get_incident_by_id(incident_id: str) -> Optional[dict]:
     """Fetch a specific incident by ID from SQLite."""
     if not DB_PATH.exists():
         return None
-    with sqlite3.connect(DB_PATH) as conn:
+    with closing(sqlite3.connect(DB_PATH)) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT * FROM incidents WHERE incident_id = ?", (incident_id,)
         ).fetchone()
-    return dict(row) if row else None
+    return {key: value for key, value in dict(row).items() if key != "trend"} if row else None
 
 
 def get_risk_history(limit: int = 50) -> list[dict]:
-    """Fetch recent risk scores ordered by incident_id ascending for trend visualization."""
+    """Return the latest risk scores in chronological order for audit visualization."""
     if not DB_PATH.exists():
         return []
-    with sqlite3.connect(DB_PATH) as conn:
+    with closing(sqlite3.connect(DB_PATH)) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT incident_id, timestamp, risk_score, risk_level, trend, "
+            "SELECT incident_id, timestamp, risk_score, risk_level, "
             "recommended_response, classification FROM incidents "
-            "ORDER BY incident_id ASC LIMIT ?", (limit,)
+            "ORDER BY timestamp DESC, CAST(SUBSTR(incident_id, 5) AS INTEGER) DESC LIMIT ?", (limit,)
         ).fetchall()
-    return [dict(row) for row in rows]
+    return [{key: value for key, value in dict(row).items() if key != "trend"} for row in reversed(rows)]
 
 
 def clear_all() -> None:
@@ -185,6 +190,6 @@ def clear_all() -> None:
     global _incident_counter
     _incident_counter = 0
     if DB_PATH.exists():
-        with sqlite3.connect(DB_PATH) as conn:
+        with closing(sqlite3.connect(DB_PATH)) as conn:
             conn.execute("DELETE FROM incidents")
             conn.commit()

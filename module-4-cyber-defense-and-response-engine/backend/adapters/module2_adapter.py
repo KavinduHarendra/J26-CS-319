@@ -45,6 +45,7 @@ def adapt(raw: dict | None) -> ThreatIntelligence:
 
     return ThreatIntelligence(
         classification=classification,
+        threat_confidence=raw.get("threat_confidence"),
         severity=severity,
         triggered_rule=raw.get("triggered_rule"),
         abnormal_features=raw.get("abnormal_features", []),
@@ -66,6 +67,7 @@ def summary_dict(ti: ThreatIntelligence) -> dict:
     """Return a flat audit-friendly dict of the threat intelligence."""
     return {
         "classification": ti.classification,
+        "threat_confidence": ti.threat_confidence,
         "severity": ti.severity,
         "triggered_rule": ti.triggered_rule,
         "abnormal_features": ti.abnormal_features,

@@ -44,5 +44,8 @@ def summary_dict(rf: RFContext) -> dict:
         "noise_floor": rf.noise_floor,
         "packet_rate": rf.packet_rate,
         "frequency_mhz": rf.frequency_mhz,
+        "bandwidth_mhz": rf.bandwidth_mhz,
+        "packet_loss_pct": rf.packet_loss_pct,
+        "latency_ms": rf.latency_ms,
         "channel_condition": rf.channel_condition,
     }

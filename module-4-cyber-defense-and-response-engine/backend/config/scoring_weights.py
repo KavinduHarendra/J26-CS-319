@@ -70,11 +70,5 @@ RISK_LEVELS: list[tuple[float, float, str]] = [
     (75.0, 100.0, "CRITICAL"),
 ]
 
-# ─── TREND ANALYSIS ──────────────────────────────────────────────────────────
-TREND_WINDOW_SIZE: int = 5          # observations to keep in rolling window
-TREND_ESCALATING_THRESHOLD: float = 8.0   # risk increase across window → ESCALATING
-TREND_IMPROVING_THRESHOLD: float = 8.0   # risk decrease across window → IMPROVING
-TREND_MIN_OBSERVATIONS: int = 2          # minimum before trend can be computed
-
 # ─── RISK SCORE CAP ──────────────────────────────────────────────────────────
 RISK_SCORE_MAX: float = 100.0

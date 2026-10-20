@@ -38,7 +38,7 @@ def correlate(
     m2_contrib = SourceContribution(
         source="MODULE_2_AI_THREAT_INTELLIGENCE",
         evidence=m2_evidence,
-        weight=0.60,  # Classification + Severity carry 60% of max score
+        weight=0.60,  # Retained API metadata; not a multiplier in additive risk scoring.
         normalized_score=m2_normalized,
     )
 
@@ -65,12 +65,11 @@ def correlate(
     m3_contrib = SourceContribution(
         source="MODULE_3_SECURE_COMMUNICATION",
         evidence=m3_evidence,
-        weight=0.40,  # Link + Freshness + Auth + Integrity carry 40% of max score
+        weight=0.40,  # Retained API metadata; not a multiplier in additive risk scoring.
         normalized_score=m3_normalized,
     )
 
-    # Compute cross-source alignment bonus
-    # When both modules agree a threat is serious, add a small correlation boost
+    # Legacy alignment indicator, retained for API compatibility, not risk points.
     correlated_boost = 0.0
     note_parts = []
 
@@ -82,8 +81,15 @@ def correlate(
         note_parts.append(
             f"Module 2 ({ti.classification}) and Module 3 ({sc.link_state}) evidence is mutually reinforcing."
         )
-    elif ti.classification == "Normal" and sc.link_state == "TRUSTED":
+    elif (ti.classification == "Normal" and sc.link_state == "TRUSTED"
+          and sc.auth_state == "VALID" and sc.integrity_state == "VALID"
+          and sc.freshness_state == "FRESH" and not sc.replay_detected and ti.severity is None):
         note_parts.append("Both Module 2 and Module 3 indicate safe conditions.")
+    elif ti.classification == "Normal" and sc.link_state == "TRUSTED":
+        note_parts.append(
+            "RF is Normal and the link is labelled TRUSTED, but reported severity or "
+            "security-state evidence prevents a safe-condition conclusion."
+        )
     elif ti.classification == "Normal" and is_m3_degraded:
         note_parts.append(
             "Module 2 indicates Normal RF, but Module 3 reports communication concern. "

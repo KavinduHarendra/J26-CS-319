@@ -55,7 +55,7 @@ def adapt(raw: dict | None) -> SecureCommunication:
         freshness_state=freshness,
         auth_state=auth,
         integrity_state=integrity,
-        replay_detected=bool(raw.get("replay_detected", False)),
+        replay_detected=raw.get("replay_detected", False),
         comm_decision=comm_decision,
         link_evidence=raw.get("link_evidence", []),
     )

@@ -17,8 +17,6 @@ decision pipeline in sequence:
               ↓
   DYNAMIC RISK SCORING
               ↓
-  SHORT-TERM THREAT TREND ANALYSIS
-              ↓
   DECISION CONFIDENCE / UNCERTAINTY HANDLING
               ↓
   RESPONSE PRIORITIZATION
@@ -37,7 +35,6 @@ from adapters import module1_adapter, module2_adapter, module3_adapter
 from services import (
     correlation_service,
     risk_service,
-    trend_service,
     conflict_service,
     confidence_service,
     response_service,
@@ -74,11 +71,6 @@ def run_pipeline(request: EvaluateRequest, integration_metadata: dict | None = N
     # All weights are loaded from config/scoring_weights.py.
     risk_score, risk_level, risk_breakdown = risk_service.compute_risk(ti, sc)
 
-    # ── STAGE 4: SHORT-TERM THREAT TREND ANALYSIS ────────────────────────────
-    # Push current score into rolling window and compute trend.
-    trend_service.push_score(risk_score)
-    trend_window = trend_service.compute_trend()
-
     # ── STAGE 5: CONFLICT DETECTION ──────────────────────────────────────────
     # Detect conflicting evidence between Module 2 and Module 3.
     # When conflict exists: confidence is reduced, response is conservative.
@@ -86,13 +78,12 @@ def run_pipeline(request: EvaluateRequest, integration_metadata: dict | None = N
 
     # ── STAGE 6: DECISION CONFIDENCE ─────────────────────────────────────────
     # Assess how confident Module 4 is in its decision.
-    confidence = confidence_service.assess_confidence(ti, sc, conflict, trend_window.trend)
+    confidence = confidence_service.assess_confidence(ti, sc, conflict)
 
     # ── STAGE 7: RESPONSE PRIORITIZATION ─────────────────────────────────────
     # Select response from prioritized rule table.
-    # Applies trend upgrade if ESCALATING.
     recommended_response, response_rationale, baseline_response = response_service.select_response(
-        ti, sc, risk_score, trend_window.trend, conflict
+        ti, sc, risk_score, conflict
     )
 
     # ── STAGE 8: BASELINE COMPARISON ─────────────────────────────────────────
@@ -102,8 +93,9 @@ def run_pipeline(request: EvaluateRequest, integration_metadata: dict | None = N
     # Build ordered list of human-readable reasons for the decision.
     reasons = explanation_service.build_reasons(
         rf, ti, sc, risk_score, risk_level, risk_breakdown,
-        correlation, conflict, trend_window, confidence.level, recommended_response,
+        correlation, conflict, confidence.level, recommended_response,
     )
+    reasons.append(f"Response selection rationale: {response_rationale}")
     pipeline_stages = explanation_service.build_pipeline_stages()
 
     # ── STAGE 10: BUILD RESPONSE ──────────────────────────────────────────────
@@ -121,14 +113,11 @@ def run_pipeline(request: EvaluateRequest, integration_metadata: dict | None = N
         evidence_conflict=conflict.evidence_conflict,
         conflict_reason=conflict.conflict_reason,
 
-        trend=trend_window.trend,
-        trend_window=trend_window,
-
         decision_confidence=confidence.level,
         confidence_rationale=confidence.rationale,
 
         recommended_response=recommended_response,
-        response_status="SIMULATED",
+        response_status="RECOMMENDED",
         response_rationale=response_rationale,
 
         reasons=reasons,
