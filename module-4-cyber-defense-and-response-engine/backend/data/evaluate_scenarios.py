@@ -1,6 +1,6 @@
 """PP1 Demo scenarios in EvaluateRequest format.
 
-9 scenarios for Progress Presentation 1 demonstration, matching the
+11 preset scenarios for decision-engine testing, matching the
 specification's scenario requirements. Each scenario has a preset
 EvaluateRequest payload plus expected outcome labels for verification.
 
@@ -180,7 +180,7 @@ EVALUATE_SCENARIOS: dict[str, dict] = {
     "s6_unknown_suspicious": {
         "label": "Scenario 6: Unknown Anomaly + Suspicious Link",
         "description": "Unclassified anomaly + suspicious comms. Expected: higher risk, OPERATOR_ESCALATION.",
-        "expected_risk_level": "HIGH",
+        "expected_risk_level": "CRITICAL",
         "expected_response": "OPERATOR_ESCALATION",
         "payload": {
             "rf_context": {
@@ -242,7 +242,7 @@ EVALUATE_SCENARIOS: dict[str, dict] = {
     "s8_replay_attempt": {
         "label": "Scenario 8: Replay Attempt",
         "description": "Module 3 detects replay. Expected: SECURE_HOLD regardless of RF classification.",
-        "expected_risk_level": "CRITICAL",
+        "expected_risk_level": "HIGH",
         "expected_response": "SECURE_HOLD",
         "payload": {
             "rf_context": {
@@ -274,9 +274,9 @@ EVALUATE_SCENARIOS: dict[str, dict] = {
 
     "s9_escalating_attack": {
         "label": "Scenario 9: Escalating Attack (Final Stage)",
-        "description": "Simulates third step of escalating attack sequence. Expected: CRITICAL, ESCALATING trend, OPERATOR_ESCALATION.",
+        "description": "Simulates third step of escalating attack sequence. Expected: CRITICAL, PREPARE_BACKUP_CHANNEL recommendation based on current evidence.",
         "expected_risk_level": "CRITICAL",
-        "expected_response": "OPERATOR_ESCALATION",
+        "expected_response": "PREPARE_BACKUP_CHANNEL",
         "payload": {
             "rf_context": {
                 "observation_id": "OBS-S9-003",
@@ -309,6 +309,33 @@ EVALUATE_SCENARIOS: dict[str, dict] = {
         },
     },
 }
+
+# Additional communication-focused inputs merged from legacy testing needs.
+# These use the existing Module 2 classification contract and Module 3 states.
+EVALUATE_SCENARIOS.update({
+    "s10_suspicious_command": {
+        "label": "Scenario 10: Suspicious Command Evidence",
+        "description": "Normal RF with a suspicious controller link. Test evidence conflict without inventing a new RF classification.",
+        "expected_risk_level": "MEDIUM",
+        "expected_response": "CONTINUE_MONITORING",
+        "payload": {
+            "rf_context": {"observation_id": "OBS-S10-001", "timestamp": "2026-10-19T10:00:00", "rssi": -65, "snr": 27, "noise_floor": -92, "frequency_mhz": 2400, "bandwidth_mhz": 20, "packet_loss_pct": 5, "latency_ms": 45},
+            "threat_intelligence": {"classification": "Normal", "severity": None, "threat_confidence": 0.71, "evidence": ["RF metrics remain within the normal range"]},
+            "secure_communication": {"link_state": "SUSPICIOUS", "freshness_state": "FRESH", "auth_state": "VALID", "integrity_state": "VALID", "replay_detected": False, "comm_decision": "MAINTAIN", "link_evidence": ["Suspicious controller command reported by Module 3"]},
+        },
+    },
+    "s11_integrity_failure": {
+        "label": "Scenario 11: Message Integrity Failure",
+        "description": "Normal RF with invalid message integrity and an untrusted link. Test communication-layer evidence independently of jamming.",
+        "expected_risk_level": "HIGH",
+        "expected_response": "OPERATOR_ESCALATION",
+        "payload": {
+            "rf_context": {"observation_id": "OBS-S11-001", "timestamp": "2026-10-19T10:01:00", "rssi": -62, "snr": 33, "noise_floor": -95},
+            "threat_intelligence": {"classification": "Normal", "severity": None, "evidence": ["No RF anomaly detected"]},
+            "secure_communication": {"link_state": "UNTRUSTED", "freshness_state": "FRESH", "auth_state": "VALID", "integrity_state": "INVALID", "replay_detected": False, "comm_decision": "SECURE_HOLD", "link_evidence": ["Message integrity verification failed"]},
+        },
+    },
+})
 
 # Escalating attack sequence — 3 steps showing progressive degradation
 ESCALATION_SEQUENCE = [

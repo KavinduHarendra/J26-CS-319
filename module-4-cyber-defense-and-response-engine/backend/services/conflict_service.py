@@ -35,6 +35,22 @@ def detect_conflict(
     link_state = sc.link_state
     replay = sc.replay_detected
 
+    # A trusted link must not be described as verified safe when its own
+    # authentication, integrity or freshness evidence contradicts that state.
+    if link_state == "TRUSTED" and (
+        sc.auth_state != "VALID" or sc.integrity_state != "VALID"
+        or sc.freshness_state != "FRESH" or replay
+    ):
+        return ConflictResult(
+            evidence_conflict=True,
+            conflict_reason=(
+                f"Module 3 reports TRUSTED link but authentication={sc.auth_state}, "
+                f"integrity={sc.integrity_state}, freshness={sc.freshness_state}, "
+                f"replay_detected={replay}. These security states require verification."
+            ),
+            conflict_pair=["MODULE_3_TRUSTED", "MODULE_3_SECURITY_STATE"],
+        )
+
     # CASE A: Normal RF + compromised comms
     if classification == "Normal" and link_state in ("UNTRUSTED", "SUSPICIOUS"):
         return ConflictResult(

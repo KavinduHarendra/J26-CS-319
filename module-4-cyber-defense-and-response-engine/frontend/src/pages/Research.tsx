@@ -16,7 +16,7 @@ export default function Research() {
           <p className="text-sm text-gray-300 leading-relaxed">
             UAV wireless communication is vulnerable to RF attacks including jamming, spoofing,
             unauthorized transmissions, and suspicious commands. Detection alone is insufficient —
-            the system must <strong className="text-white">decide and respond</strong> autonomously.
+            the system must <strong className="text-white">assess risk and recommend responses</strong> autonomously.
           </p>
         </Panel>
 
@@ -24,7 +24,7 @@ export default function Research() {
           <p className="text-sm text-gray-300 leading-relaxed">
             An <strong className="text-cyan-400">Autonomous Cyber Defense and Response Engine</strong> that
             receives threat intelligence from SDR detection, AI classification, and secure communication modules,
-            then performs risk assessment, threat forecasting, and autonomous defense decision-making.
+            then performs evidence correlation, risk assessment, response selection, and explainable audit logging.
           </p>
         </Panel>
       </div>
@@ -40,7 +40,7 @@ export default function Research() {
               Alert Operator
             </div>
             <p className="text-xs text-gray-500 mt-4 text-center">
-              Reactive · Manual · No predictive capability
+              Detection alert without correlated evidence or risk-based recommendations
             </p>
           </div>
         </Panel>
@@ -50,15 +50,13 @@ export default function Research() {
             {[
               'Threat Detected',
               'Risk Assessment',
-              'Threat Forecast',
               'Autonomous Decision',
               'Response Recommendation',
-              'Response Execution',
-              'Feedback & Logging',
+              'Explainable Decision & Audit Logging',
             ].map((step, i, arr) => (
               <div key={step} className="flex flex-col items-center">
                 <div className={`px-4 py-2 rounded-lg text-sm font-medium ${
-                  step.includes('Autonomous') || step.includes('Forecast')
+                  step.includes('Autonomous')
                     ? 'bg-cyan-500/10 border border-cyan-500/40 text-cyan-300'
                     : 'bg-purple-500/10 border border-purple-500/30 text-purple-300'
                 }`}>
@@ -68,41 +66,18 @@ export default function Research() {
               </div>
             ))}
             <p className="text-xs text-emerald-400 mt-3 text-center font-semibold">
-              Proactive · Autonomous · Forecast-aware
+              Correlated evidence · Explainable risk · Recommendations only
             </p>
           </div>
         </Panel>
       </div>
-
-      <Panel title="REACTIVE vs PREDICTIVE DEFENSE — Key Research Concept">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="p-4 rounded-lg bg-gray-800/50 border border-gray-700">
-            <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Reactive Defense</p>
-            <p className="text-sm text-gray-300 mb-3">
-              Current threat score = 55 (HIGH) → <strong className="text-yellow-400">Increase Monitoring</strong>
-            </p>
-            <p className="text-xs text-gray-500">
-              Responds only to current state. May be too late if threat is escalating rapidly.
-            </p>
-          </div>
-          <div className="p-4 rounded-lg bg-amber-500/10 border border-amber-500/30">
-            <p className="text-xs text-amber-400 uppercase tracking-wider mb-2">Predictive / Forecast-Aware Defense</p>
-            <p className="text-sm text-gray-300 mb-3">
-              Forecast: score expected to reach 82 in 15 min → <strong className="text-amber-300">Prepare Backup Communication</strong>
-            </p>
-            <p className="text-xs text-gray-500">
-              Acts before critical threshold. Demonstrates research value of forecasting in autonomous defense.
-            </p>
-          </div>
-        </div>
-      </Panel>
 
       <div className="mt-8 p-6 rounded-xl bg-gradient-to-r from-cyan-500/10 to-purple-500/10 border border-cyan-500/20 text-center">
         <p className="text-lg font-bold text-white mb-2">
           "From Threat Detection to Autonomous Cyber Defense"
         </p>
         <p className="text-sm text-gray-400">
-          Assess · Predict · Decide · Recommend · Respond · Monitor
+          Correlate · Assess · Recommend · Explain · Log
         </p>
         <div className="flex items-center justify-center gap-2 mt-4 text-xs text-gray-500">
           <span>Detection</span>
@@ -119,11 +94,9 @@ export default function Research() {
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
           {[
             { action: 'Assess', desc: 'Combine module outputs into unified risk score' },
-            { action: 'Predict', desc: 'Forecast threat escalation using trend analysis' },
-            { action: 'Decide', desc: 'Select optimal defense response autonomously' },
+            { action: 'Decide', desc: 'Select a defense recommendation using risk and evidence' },
             { action: 'Recommend', desc: 'Channel switch, safe mode, operator alerts' },
-            { action: 'Respond', desc: 'Generate response workflows (simulated)' },
-            { action: 'Monitor', desc: 'Log incidents and update UAV status' },
+            { action: 'Monitor', desc: 'Record evidence, risk, selected response, and explanations' },
           ].map(({ action, desc }) => (
             <div key={action} className="p-3 rounded-lg bg-[#0a0e17] border border-gray-800">
               <p className="text-cyan-400 font-semibold text-sm">{action}</p>

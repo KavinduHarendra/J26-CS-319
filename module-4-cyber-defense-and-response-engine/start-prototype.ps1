@@ -19,4 +19,4 @@ Start-Sleep -Seconds 5
 Write-Host "`nOpening browser..." -ForegroundColor Green
 Start-Process "http://localhost:5173"
 
-Write-Host "`nDemo: Threat Simulation, Simulate Jamming, Analyze Threat, Simulate Response" -ForegroundColor Cyan
+Write-Host "`nWorkflow: Defense Evaluation, upload JSON files, review risk and recommendation, inspect audit log" -ForegroundColor Cyan

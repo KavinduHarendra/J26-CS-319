@@ -5,7 +5,7 @@ This schema defines the data contract flowing from Module 3 into Module 4.
 """
 
 from typing import Optional, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 LinkStateValue = Literal["TRUSTED", "DEGRADED", "SUSPICIOUS", "UNTRUSTED"]
@@ -61,3 +61,9 @@ class SecureCommunication(BaseModel):
         default_factory=list,
         description="Human-readable evidence strings from Module 3"
     )
+
+    @model_validator(mode="after")
+    def consistent_replay_evidence(self):
+        if self.replay_detected != (self.freshness_state == "REPLAY"):
+            raise ValueError("replay_detected must agree with freshness_state: REPLAY requires true; FRESH or STALE requires false")
+        return self

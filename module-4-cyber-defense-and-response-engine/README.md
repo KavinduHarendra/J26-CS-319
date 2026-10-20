@@ -7,7 +7,7 @@ Project J26-CS-319 | AI-Driven SDR-Based Anti-Jamming and Wireless Threat Detect
 
 ## Research Novelty
 
-> *"An explainable RF-aware autonomous cyber-defense decision engine that correlates UAV wireless threat intelligence with secure-communication state, performs dynamic risk assessment and short-term threat-trend analysis, handles conflicting evidence and uncertainty, and prioritizes context-aware defensive responses."*
+> *"An explainable RF-aware autonomous cyber-defense decision engine that correlates UAV wireless threat intelligence with secure-communication state, performs dynamic risk assessment, handles conflicting evidence and uncertainty, and prioritizes context-aware defensive responses."*
 
 Module 4 is the final decision-making layer of the four-component framework:
 
@@ -98,25 +98,24 @@ POST http://localhost:8000/api/evaluate
 - `risk_breakdown` — explainable per-component points
 - `correlation` — multi-source evidence correlation
 - `evidence_conflict` + `conflict_reason`
-- `trend` + `trend_window`
 - `decision_confidence` + `confidence_rationale`
 - `recommended_response` + `response_rationale`
 - `reasons` — ordered explainability chain
 - `baseline_response` + `baseline_vs_proposed`
-- `response_status: "SIMULATED"`
+- `response_status: "RECOMMENDED"`
 
 ### Other Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/evaluate/scenarios` | List all 9 PP1 demo scenarios |
+| GET | `/api/evaluate/scenarios` | List all 11 preset scenarios |
 | GET | `/api/evaluate/scenarios/{id}` | Get scenario payload |
-| GET | `/api/evaluate/escalation/{step}` | Get escalation step (1–3) |
+| GET | `/api/evaluate/escalation/{step}` | Load progressive test input (1–3) |
 | GET | `/api/evaluate/incidents` | SQLite incident log |
 | GET | `/api/evaluate/incidents/{id}` | Single incident |
 | GET | `/api/evaluate/risk-history` | Risk score history |
 | GET | `/api/evaluate/status` | Module 4 status |
-| POST | `/api/evaluate/reset` | Reset simulation state |
+| POST | `/api/evaluate/reset` | Clear audit history |
 
 ---
 
@@ -127,7 +126,7 @@ cd backend
 py -m pytest tests/ -v
 ```
 
-**43 tests:** risk scoring, response selection, conflict detection, confidence, and 9 integration scenarios.
+**80 tests:** risk scoring, response recommendations, conflict detection, confidence, file integration, audit persistence, scope checks, and scenario regressions.
 
 ---
 
@@ -140,15 +139,14 @@ py -m pytest tests/ -v
 5. Review:
    - Overall Risk Score gauge (0–100)
    - Risk Level (LOW/MEDIUM/HIGH/CRITICAL)
-   - Trend (INSUFFICIENT_DATA/STABLE/ESCALATING/IMPROVING)
    - Decision Confidence (HIGH/MEDIUM/LOW)
    - Evidence Conflict flag
-   - Recommended Response (with SIMULATED status)
+   - Recommended Response (with RECOMMENDED status)
    - Multi-Source Correlation view
    - Dynamic Risk Score Breakdown
    - Explainability panel — "WHY THIS DECISION?"
    - Baseline comparison
-6. Run the **Escalating Attack Sequence** (Steps 1→2→3) to demonstrate trend analysis
+6. Run the **Escalating Attack Sequence** (Steps 1→2→3) to compare risk assessments for progressively degraded inputs
 7. View **Risk Score History** chart populating across evaluations
 
 ---
@@ -171,9 +169,8 @@ backend/
     module2_adapter.py       ← Module 2 integration point (enforces rules)
     module3_adapter.py       ← Module 3 integration point (conservative defaults)
   services/
-    pipeline.py              ← 11-stage orchestrator
+    pipeline.py              ← Current-evidence decision orchestrator
     risk_service.py          ← Dynamic risk scoring
-    trend_service.py         ← Rolling window trend analysis
     conflict_service.py      ← Conflicting evidence detection
     confidence_service.py    ← Decision confidence assessment
     correlation_service.py   ← Multi-source evidence correlation
@@ -186,15 +183,14 @@ backend/
     evaluate_scenarios.py    ← 9 PP1 demo scenarios
   tests/
     test_risk.py             ← 8 risk scoring tests
-    test_response.py         ← 11 response selection tests
+    test_response.py         ← 10 response selection tests
     test_conflicts.py        ← 12 conflict + confidence tests
     test_integration.py      ← 12 end-to-end pipeline tests
 
 frontend/src/
   pages/
     Evaluate.tsx             ← Main Module 4 dashboard (PP1)
-    Dashboard.tsx            ← UAV status + incident log
-    ThreatSimulation.tsx     ← Legacy threat simulation
+    Dashboard.tsx            ← Observation risk summary + SQLite audit log
 ```
 
 ---
@@ -228,6 +224,62 @@ Edit `backend/config/scoring_weights.py` to change weights without touching busi
 
 ## Disclaimer
 
-> All responses are **SIMULATED**. No real UAV hardware is connected or controlled.
+> All responses are **RECOMMENDATIONS ONLY**. No defensive action is executed and no UAV hardware is controlled.
 > This is a research prototype for PP1 demonstration purposes only.
 > Scoring weights are initial prototype values pending experimental calibration.
+
+## Revised Module 4 Scope
+
+The component has four objectives:
+
+1. Correlate AI Threat Intelligence and Secure Communication evidence, match observation IDs, and detect conflicts.
+2. Calculate explainable current cyber-risk scores and risk levels using configured weights.
+3. Select risk-based defensive recommendations without executing them.
+4. Explain each decision and persist its evidence, triggered detection rule, risk, recommendation, observation ID, and timestamp in SQLite.
+
+Defense Evaluation accepts Module 2 and Module 3 JSON files. Defense Testing uses preset or manually entered evidence through the same evaluation pipeline. The Defense Dashboard reads persisted Module 4 audit records.
+
+### File integration
+
+`POST /api/evaluate-files` accepts multipart fields `module2_file` and `module3_file`. Matching observation IDs are preferred; the existing timestamp fallback (within five seconds when Module 3 has no observation ID) remains supported. Mismatched IDs or invalid files return the existing structured validation errors without creating audit entries.
+
+### Scope cleanup and API compatibility
+
+The `/api/evaluate`, `/api/evaluate-files`, evaluation scenario, incident, risk-history, status, and audit-reset URLs remain. The legacy `/api/analyze`, `/api/scenarios`, and `/api/prioritize-threats` routes have been removed with the duplicate pipeline. Current-evidence scoring weights and recommendation identifiers are unchanged.
+
+Forecasting, temporal response upgrades, response execution simulation, simulated UAV state changes, response effectiveness evaluation, and browser-side fallback simulation have been removed. No adaptive policy learning, model retraining, or MAVLink execution implementation was found.
+
+Intentional contract changes required by this cleanup:
+
+- Evaluation output no longer includes `trend` or `trend_window`; `response_status` is `RECOMMENDED`.
+- Legacy Threat Analysis APIs and models are removed. All active evaluations use the Module 4 pipeline.
+- `/api/simulate-response`, `/api/uav-status`, and the simulation-only `/api/reset` are removed.
+- Risk-history and status responses no longer include temporal analysis fields.
+- Existing SQLite rows and full historical snapshots remain untouched. The old nullable `trend` database column is reserved for database compatibility and is not used in new decisions.
+
+Retained recommendations include MONITOR, CONTINUE_MONITORING, INCREASE_MONITORING, PREPARE_BACKUP_CHANNEL, SECURE_HOLD, and OPERATOR_ESCALATION. These are labels for proposed actions, not execution commands. No new response policy was added during cleanup.
+
+### Validation
+
+Run backend regression tests from `backend` with `py -m pytest tests -q`. Tests use temporary SQLite databases and do not clear application audit records. From `frontend`, run `npm run build` and `npm run lint`.
+## Unified Defense Testing
+
+The sidebar has exactly three pages: Defense Evaluation, Defense Testing, and Defense Dashboard.
+
+Defense Evaluation uploads files to `/api/evaluate-files`. Defense Testing submits preset or manual `EvaluateRequest` inputs to `/api/evaluate`. Both routes normalize through the same models and adapters, call `services/pipeline.py`, use `config/scoring_weights.py` and `config/response_rules.py`, and write to the same SQLite audit store. There is no legacy RF/AI/history blended risk calculation.
+
+Defense Testing contains 11 presets, the existing progressive test sequence, Module 1/2/3 manual inputs, correlated and normalized evidence, risk score/level, risk breakdown, response recommendation, explanations, and recorded risk history. Reset Inputs clears only the form and current result; saved audit records remain.
+
+Optional supporting context now includes RF bandwidth, packet-loss percentage, latency, and Module 2 `threat_confidence` (0–1). These fields are recorded and shown as evidence. They do not add scoring weights, change thresholds, or alter the existing confidence assessment rules. In Module 2 files, the optional RF measurements can be supplied in an `rf_context` object; the existing `statistical_deviation` input remains supported as Module 2 evidence. Deviation z-scores are not presented as physical RF measurements.
+
+The extra scenarios cover suspicious-command evidence and message-integrity failure. They use the current Module 2 classifications (Normal, Jamming, Unknown Anomaly) and Module 3 states. Unsupported legacy threat names are not added as new classifications or assigned invented weights.
+
+Regression checks compare manual and file evaluations for all 11 scenarios, including normalized evidence, risk breakdown, recommended response, explanation, and audit persistence. Both paths reject out-of-range context values; file errors use the structured integration-error format.
+
+### PP1 stability validation
+
+Manual requests must explicitly supply Module 2 classification and Module 3 link, freshness, authentication, integrity, and replay states. Missing security evidence is rejected rather than interpreted as safe. Replay detection and `freshness_state: REPLAY` must agree; inconsistent inputs are rejected rather than assigned an invented risk adjustment. JSON boolean strings such as `"false"` are parsed as booleans.
+
+For timestamp fallback, both timestamps must include timezone offsets, or both must omit them. Mixed formats return `TIMESTAMP_TIMEZONE_MISMATCH`; the application does not assume a timezone. Matching observation IDs retain priority.
+
+The PP1 regression run passed 135 backend tests, TypeScript/production build, and frontend lint. HTTP checks compared all 11 scenarios through both evaluation routes against a disposable database. See [PP1_STABILIZATION_REPORT.md](PP1_STABILIZATION_REPORT.md) for demonstration results, remaining response-policy decisions, and browser-verification limitations. Scoring weights, thresholds, and response rules were not changed during stabilization.

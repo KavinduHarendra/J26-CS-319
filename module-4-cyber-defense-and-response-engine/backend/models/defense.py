@@ -6,11 +6,10 @@ This module defines all Pydantic models used in Module 4's own pipeline:
 - BaselineResponse: simple static baseline for research comparison
 - RiskBreakdown: explainable risk score decomposition
 - CorrelationResult: multi-source evidence correlation details
-- TrendWindow: rolling risk history for trend analysis
 """
 
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from models.module1 import RFContext
 from models.module2 import ThreatIntelligence
@@ -27,13 +26,29 @@ class EvaluateRequest(BaseModel):
         description="RF feature context from Module 1 (SDR RF Threat Detection)"
     )
     threat_intelligence: ThreatIntelligence = Field(
-        default_factory=ThreatIntelligence,
         description="Threat classification from Module 2 (AI Threat Intelligence)"
     )
     secure_communication: SecureCommunication = Field(
-        default_factory=SecureCommunication,
         description="Communication security state from Module 3 (Secure UAV Communication)"
     )
+
+    @field_validator("threat_intelligence", "secure_communication", mode="before")
+    @classmethod
+    def require_explicit_evidence(cls, value, info):
+        """Defaults for standalone models must not certify absent input as safe."""
+        required = ("classification",) if info.field_name == "threat_intelligence" else (
+            "link_state", "freshness_state", "auth_state", "integrity_state", "replay_detected"
+        )
+        if isinstance(value, BaseModel):
+            supplied = value.model_fields_set
+        elif isinstance(value, dict):
+            supplied = value.keys()
+        else:
+            return value  # Pydantic supplies the structured object-type error.
+        missing = [field for field in required if field not in supplied]
+        if missing:
+            raise ValueError(f"Missing required evidence: {', '.join(missing)}")
+        return value
 
 
 # ─── Risk Scoring ────────────────────────────────────────────────────────────
@@ -80,7 +95,7 @@ class CorrelationResult(BaseModel):
     module3_link_state: str
     module3_replay: bool
     source_contributions: list[SourceContribution]
-    correlated_risk_boost: float  # additional points from cross-source alignment
+    correlated_risk_boost: float  # Legacy alignment indicator; not added to risk score.
     correlation_note: str
 
 
@@ -93,18 +108,6 @@ class ConflictResult(BaseModel):
     conflict_pair: Optional[list[str]] = None  # e.g. ["MODULE_2_NORMAL", "MODULE_3_UNTRUSTED"]
 
 
-# ─── Trend Analysis ───────────────────────────────────────────────────────────
-
-class TrendWindow(BaseModel):
-    """Rolling window of recent risk scores for trend analysis."""
-    scores: list[float]
-    trend: str  # INSUFFICIENT_DATA | STABLE | ESCALATING | IMPROVING
-    slope: float
-    window_size: int
-    method: str = "Delta comparison over rolling window (Prototype)"
-
-
-# ─── Confidence ───────────────────────────────────────────────────────────────
 
 class ConfidenceResult(BaseModel):
     """Decision confidence assessment."""
@@ -117,7 +120,7 @@ class ConfidenceResult(BaseModel):
 class EvaluateResponse(BaseModel):
     """Complete Module 4 decision output.
 
-    This is the explainable, risk-aware, trend-aware, prioritized
+    This is the explainable, risk-aware, prioritized
     autonomous cyber-defense recommendation for UAV operation.
     """
 
@@ -138,17 +141,13 @@ class EvaluateResponse(BaseModel):
     evidence_conflict: bool
     conflict_reason: Optional[str] = None
 
-    # Trend
-    trend: str  # INSUFFICIENT_DATA | STABLE | ESCALATING | IMPROVING
-    trend_window: TrendWindow
-
     # Confidence
     decision_confidence: str  # HIGH | MEDIUM | LOW
     confidence_rationale: str
 
     # Response
     recommended_response: str
-    response_status: str = "SIMULATED"
+    response_status: str = "RECOMMENDED"
     response_rationale: str
 
     # Explainability
@@ -173,16 +172,16 @@ class EvaluateResponse(BaseModel):
 # ─── Baseline Model ───────────────────────────────────────────────────────────
 
 class BaselineResponse(BaseModel):
-    """Static response baseline (no correlation, no trend, no conflict handling).
+    """Static response baseline (no correlation, no conflict handling).
 
     Used in research comparison to demonstrate why Module 4's multi-source,
-    trend-aware, conflict-aware engine produces better decisions.
+    conflict-aware engine produces better decisions.
 
-    Baseline ignores: communication state, trend, evidence consistency,
+    Baseline ignores: communication state, evidence consistency,
     confidence, replay, freshness, auth/integrity.
     """
     classification: str
     baseline_response: str
     baseline_rule: str
     limitation: str
-    response_status: str = "SIMULATED"
+    response_status: str = "RECOMMENDED"

@@ -1,6 +1,6 @@
 """Module 4 — Response Decision Rules.
 
-Defines the rule table mapping (classification, link_state, trend, replay)
+Defines the rule table mapping (classification, link_state, risk, replay)
 tuples to recommended responses.
 
 Rules are evaluated in priority order. The FIRST matching rule wins.
@@ -14,8 +14,8 @@ Supported responses:
   CONTINUE_MONITORING  — Slightly elevated, continue with awareness
   INCREASE_MONITORING  — Anomaly detected, heighten monitoring
   PREPARE_BACKUP_CHANNEL — Active threat, prepare fallback comms
-  SWITCH_TO_BACKUP     — Imminent threat, activate backup channel
-  SECURE_HOLD          — High-confidence attack, enter secure hold mode
+  SWITCH_TO_BACKUP     — Imminent threat, recommend backup communication
+  SECURE_HOLD          — High-confidence attack, recommend secure hold
   OPERATOR_ESCALATION  — Uncertain/high-risk, require human judgment
 """
 
@@ -31,7 +31,6 @@ class ResponseRule:
         classification: Optional[str | list[str]],
         link_states: Optional[list[str]],
         risk_min: float,
-        trend: Optional[str | list[str]],
         replay: Optional[bool],
         response: str,
         rationale: str,
@@ -40,19 +39,16 @@ class ResponseRule:
         self.classification = [classification] if isinstance(classification, str) else classification
         self.link_states = link_states
         self.risk_min = risk_min
-        self.trend = [trend] if isinstance(trend, str) else trend
         self.replay = replay
         self.response = response
         self.rationale = rationale
 
-    def matches(self, classification: str, link_state: str, risk_score: float, trend: str, replay: bool) -> bool:
+    def matches(self, classification: str, link_state: str, risk_score: float, replay: bool) -> bool:
         if self.classification and classification not in self.classification:
             return False
         if self.link_states and link_state not in self.link_states:
             return False
         if risk_score < self.risk_min:
-            return False
-        if self.trend and trend not in self.trend:
             return False
         if self.replay is not None and replay != self.replay:
             return False
@@ -68,22 +64,9 @@ RESPONSE_RULES: list[ResponseRule] = [
         classification=None,
         link_states=None,
         risk_min=0.0,
-        trend=None,
         replay=True,
         response="SECURE_HOLD",
-        rationale="Replay attack detected by Module 3. Communication integrity compromised. Secure hold mandatory.",
-    ),
-
-    # RULE R2: Critical risk + escalating → OPERATOR_ESCALATION
-    ResponseRule(
-        name="R2_CRITICAL_ESCALATING",
-        classification=None,
-        link_states=None,
-        risk_min=75.0,
-        trend="ESCALATING",
-        replay=None,
-        response="OPERATOR_ESCALATION",
-        rationale="Critical risk with escalating trend. Autonomous response insufficient — human judgment required.",
+        rationale="Replay attack detected by Module 3. Communication integrity compromised. Secure hold recommended; no action is executed.",
     ),
 
     # RULE R3: Jamming + UNTRUSTED → SECURE_HOLD
@@ -92,7 +75,6 @@ RESPONSE_RULES: list[ResponseRule] = [
         classification="Jamming",
         link_states=["UNTRUSTED"],
         risk_min=0.0,
-        trend=None,
         replay=None,
         response="SECURE_HOLD",
         rationale="Confirmed jamming combined with untrusted communication link. Maximum defensive posture.",
@@ -104,7 +86,6 @@ RESPONSE_RULES: list[ResponseRule] = [
         classification="Jamming",
         link_states=["DEGRADED", "SUSPICIOUS"],
         risk_min=0.0,
-        trend=None,
         replay=None,
         response="PREPARE_BACKUP_CHANNEL",
         rationale="Confirmed jamming with communication degradation. Backup channel preparation warranted.",
@@ -116,7 +97,6 @@ RESPONSE_RULES: list[ResponseRule] = [
         classification="Unknown Anomaly",
         link_states=["SUSPICIOUS", "UNTRUSTED"],
         risk_min=0.0,
-        trend=None,
         replay=None,
         response="OPERATOR_ESCALATION",
         rationale="Unclassified RF anomaly combined with communication security concerns. Escalate to operator.",
@@ -128,7 +108,6 @@ RESPONSE_RULES: list[ResponseRule] = [
         classification="Normal",
         link_states=["UNTRUSTED"],
         risk_min=0.0,
-        trend=None,
         replay=None,
         response="OPERATOR_ESCALATION",
         rationale="RF classified Normal but communication link is UNTRUSTED. Conflicting evidence requires operator review.",
@@ -140,7 +119,6 @@ RESPONSE_RULES: list[ResponseRule] = [
         classification="Jamming",
         link_states=["TRUSTED"],
         risk_min=50.0,
-        trend=None,
         replay=None,
         response="PREPARE_BACKUP_CHANNEL",
         rationale="Confirmed jamming even though link remains trusted. Risk warrants backup channel preparation.",
@@ -152,7 +130,6 @@ RESPONSE_RULES: list[ResponseRule] = [
         classification="Unknown Anomaly",
         link_states=["TRUSTED"],
         risk_min=0.0,
-        trend=None,
         replay=None,
         response="INCREASE_MONITORING",
         rationale="Unclassified RF anomaly with trusted communication. Conservative monitoring increase appropriate.",
@@ -164,7 +141,6 @@ RESPONSE_RULES: list[ResponseRule] = [
         classification=None,
         link_states=None,
         risk_min=25.0,
-        trend=None,
         replay=None,
         response="CONTINUE_MONITORING",
         rationale="Elevated risk detected. Continue monitoring with heightened awareness.",
@@ -176,7 +152,6 @@ RESPONSE_RULES: list[ResponseRule] = [
         classification="Normal",
         link_states=["TRUSTED"],
         risk_min=0.0,
-        trend=None,
         replay=None,
         response="MONITOR",
         rationale="Normal RF classification and trusted communication link. Routine monitoring sufficient.",
@@ -188,23 +163,12 @@ RESPONSE_RULES: list[ResponseRule] = [
         classification=None,
         link_states=None,
         risk_min=0.0,
-        trend=None,
         replay=None,
         response="CONTINUE_MONITORING",
         rationale="Insufficient evidence to determine specific response. Continue monitoring.",
     ),
 ]
 
-
-# ─── Trend-based response upgrade table ──────────────────────────────────────
-# If base response is X and trend is ESCALATING, upgrade to Y.
-
-TREND_UPGRADES: dict[str, str] = {
-    "MONITOR": "INCREASE_MONITORING",
-    "CONTINUE_MONITORING": "INCREASE_MONITORING",
-    "INCREASE_MONITORING": "PREPARE_BACKUP_CHANNEL",
-    "PREPARE_BACKUP_CHANNEL": "OPERATOR_ESCALATION",
-}
 
 # ─── Baseline rules (for research comparison) ─────────────────────────────────
 # Simple IF classification THEN response — ignores all context.
@@ -213,7 +177,7 @@ BASELINE_RULES: dict[str, dict] = {
     "Normal": {
         "response": "MONITOR",
         "rule": "IF classification = Normal THEN MONITOR",
-        "limitation": "Ignores link state, freshness, auth, integrity, replay, trend, and evidence consistency.",
+        "limitation": "Ignores link state, freshness, auth, integrity, replay, and evidence consistency.",
     },
     "Unknown Anomaly": {
         "response": "INCREASE_MONITORING",
