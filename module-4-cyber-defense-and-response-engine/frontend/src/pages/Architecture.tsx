@@ -39,7 +39,7 @@ export default function Architecture() {
           <div className="space-y-1">
             {workflow.map(({ step, desc }, i) => (
               <div key={step}>
-                <div className={`p-3 rounded-lg border ${step.includes('AUTONOMOUS') ? 'bg-cyan-500/10 border-cyan-500/40' : 'bg-[#0a0e17] border-gray-800'}`}>
+                <div className={`p-3 rounded-lg border ${step.includes('AUTONOMOUS') ? 'bg-cyan-500/10 border-cyan-500/40' : 'bg-cyber-bg border-gray-800'}`}>
                   <p className={`text-sm font-semibold ${step.includes('AUTONOMOUS') ? 'text-cyan-400' : 'text-gray-200'}`}>{step}</p>
                   <p className="text-xs text-gray-500 mt-1">{desc}</p>
                 </div>
@@ -58,7 +58,7 @@ export default function Architecture() {
             <div className="space-y-2">
               {architecture.map(({ name, role, sim, highlight }) => (
                 <div key={name}>
-                  <div className={`p-3 rounded-lg border ${highlight ? 'bg-purple-500/10 border-purple-500/40' : 'bg-[#0a0e17] border-gray-800'}`}>
+                  <div className={`p-3 rounded-lg border ${highlight ? 'bg-purple-500/10 border-purple-500/40' : 'bg-cyber-bg border-gray-800'}`}>
                     <div className="flex items-center justify-between">
                       <p className={`text-sm font-semibold ${highlight ? 'text-purple-300' : 'text-gray-200'}`}>{name}</p>
                       {sim && <span className="text-[10px] px-2 py-0.5 rounded bg-gray-800 text-gray-500">Simulated Input</span>}

@@ -2,8 +2,8 @@ import type { ReactNode } from 'react'
 
 export function Panel({ title, children, className = '' }: { title: string; children: ReactNode; className?: string }) {
   return (
-    <div className={`bg-[#111827] border border-gray-800 rounded-xl overflow-hidden ${className}`}>
-      <div className="px-4 py-3 border-b border-gray-800 bg-[#0d1321]">
+    <div className={`bg-cyber-panel border border-gray-800 rounded-xl overflow-hidden ${className}`}>
+      <div className="px-4 py-3 border-b border-gray-800 bg-cyber-surface">
         <h3 className="text-sm font-semibold text-gray-200">{title}</h3>
       </div>
       <div className="p-4">{children}</div>

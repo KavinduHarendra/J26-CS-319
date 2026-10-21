@@ -73,12 +73,12 @@ function confidenceColor(c: string) {
 
 function PipelineViz({ active }: { active: boolean }) {
   const stages = [
-    { label: 'MODULE 2\nThreat Intel', color: 'text-purple-400 border-purple-500/40 bg-purple-500/10', icon: Shield },
-    { label: 'MODULE 3\nComm Trust', color: 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10', icon: Lock },
+    { label: 'MODULE 2\nThreat Intel', color: 'text-cyan-400 border-cyan-400/40 bg-cyan-400/10', icon: Shield },
+    { label: 'MODULE 3\nComm Trust', color: 'text-cyan-400 border-cyan-400/40 bg-cyan-400/10', icon: Lock },
   ]
   return (
-    <div className="bg-[#0d1321] border border-gray-800 rounded-xl p-4">
-      <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-3">Decision Pipeline — Multi-Source Correlation</p>
+    <div className="bg-cyber-surface border border-cyan-400/20 rounded-xl p-4">
+      <p className="text-[10px] text-white/65 uppercase tracking-wider mb-3">Decision Pipeline — Multi-Source Correlation</p>
       <div className="flex items-center gap-2 flex-wrap">
         {stages.map(({ label, color, icon: Icon }) => (
           <div key={label} className={`flex flex-col items-center px-3 py-2 rounded-lg border text-center text-[10px] font-semibold ${color}`}>
@@ -86,23 +86,23 @@ function PipelineViz({ active }: { active: boolean }) {
             {label.split('\n').map((l, i) => <span key={i}>{l}</span>)}
           </div>
         ))}
-        <ChevronRight className="w-4 h-4 text-gray-600" />
-        <div className={`flex flex-col items-center px-3 py-2 rounded-lg border text-center text-[10px] font-semibold ${active ? 'text-amber-400 border-amber-500/40 bg-amber-500/10 animate-pulse' : 'text-gray-500 border-gray-700'}`}>
+        <ChevronRight className="w-4 h-4 text-white/40" />
+        <div className={`flex flex-col items-center px-3 py-2 rounded-lg border text-center text-[10px] font-semibold ${active ? 'text-cyan-400 border-cyan-400/40 bg-cyan-400/10 animate-pulse' : 'text-white/65 border-white/20'}`}>
           <Activity className="w-4 h-4 mb-1" />
           MULTI-SOURCE{'\n'}CORRELATION
         </div>
-        <ChevronRight className="w-4 h-4 text-gray-600" />
-        <div className={`flex flex-col items-center px-3 py-2 rounded-lg border text-center text-[10px] font-semibold ${active ? 'text-red-400 border-red-500/40 bg-red-500/10' : 'text-gray-500 border-gray-700'}`}>
+        <ChevronRight className="w-4 h-4 text-white/40" />
+        <div className={`flex flex-col items-center px-3 py-2 rounded-lg border text-center text-[10px] font-semibold ${active ? 'text-cyan-400 border-cyan-400/40 bg-cyan-400/10' : 'text-white/65 border-white/20'}`}>
           <BarChart3 className="w-4 h-4 mb-1" />
           RISK{'\n'}SCORE
         </div>
-        <ChevronRight className="w-4 h-4 text-gray-600" />
-        <div className={`flex flex-col items-center px-4 py-2 rounded-lg border text-center text-[10px] font-bold ${active ? 'text-cyan-300 border-cyan-500/60 bg-cyan-500/15' : 'text-gray-500 border-gray-700'}`}>
+        <ChevronRight className="w-4 h-4 text-white/40" />
+        <div className={`flex flex-col items-center px-4 py-2 rounded-lg border text-center text-[10px] font-bold ${active ? 'text-cyan-400 border-cyan-400/60 bg-cyan-400/15' : 'text-white/65 border-white/20'}`}>
           <Zap className="w-4 h-4 mb-1" />
           RESPONSE{'\n'}SELECTION
         </div>
-        <ChevronRight className="w-4 h-4 text-gray-600" />
-        <div className={`flex flex-col items-center px-4 py-2 rounded-lg border text-center text-[10px] font-bold ${active ? 'text-emerald-300 border-emerald-500/40 bg-emerald-500/10' : 'text-gray-500 border-gray-700'}`}>
+        <ChevronRight className="w-4 h-4 text-white/40" />
+        <div className={`flex flex-col items-center px-4 py-2 rounded-lg border text-center text-[10px] font-bold ${active ? 'text-cyan-400 border-cyan-400/40 bg-cyan-400/10' : 'text-white/65 border-white/20'}`}>
           <FileText className="w-4 h-4 mb-1" />
           EXPLANATION &amp;{'\n'}AUDIT LOGGING
         </div>
@@ -364,38 +364,38 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
       {/* ── Pipeline Visualization ── */}
       <PipelineViz active={!!result} />
 
-      {mode === 'files' && (<section aria-labelledby="file-integration-title" className="overflow-hidden rounded-2xl border border-cyan-500/30 bg-[#111827] shadow-lg shadow-cyan-950/20">
-        <div className="border-b border-cyan-500/20 bg-[#0d1726] px-6 py-6 sm:px-8">
+      {mode === 'files' && (<section aria-labelledby="file-integration-title" className="overflow-hidden rounded-2xl border border-cyan-400/30 bg-cyber-surface ">
+        <div className="border-b border-cyan-400/20 bg-cyber-surface px-6 py-6 sm:px-8">
           <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-cyan-400">Module 2 + Module 3 JSON</p>
           <h2 id="file-integration-title" className="text-2xl font-bold text-white sm:text-3xl">File-Based Integration</h2>
-          <p className="mt-3 max-w-3xl text-sm leading-relaxed text-gray-400 sm:text-base">Upload threat intelligence and secure communication files to assess risk and generate a defense decision.</p>
+          <p className="mt-3 max-w-3xl text-sm leading-relaxed text-white/65 sm:text-base">Upload threat intelligence and secure communication files to assess risk and generate a defense decision.</p>
         </div>
         <div className="space-y-6 p-6 sm:p-8">
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-            <label className="flex min-w-0 flex-col gap-4 rounded-xl border border-dashed border-purple-500/40 bg-purple-500/5 p-6 transition hover:border-purple-400 focus-within:ring-2 focus-within:ring-purple-400">
-              <span className="flex items-center gap-3 text-lg font-semibold text-purple-200"><Shield className="h-6 w-6 shrink-0" />Module 2 threat intelligence</span>
-              <span className="text-sm text-gray-400">Select the threat intelligence JSON file.</span>
+            <label className="integration-upload integration-upload-intelligence flex min-w-0 flex-col gap-4 rounded-xl border p-6 transition">
+              <span className="flex items-center gap-3 text-lg font-semibold text-white"><Shield className="h-6 w-6 shrink-0" />Module 2 threat intelligence</span>
+              <span className="text-sm text-white/65">Select the threat intelligence JSON file.</span>
               <input type="file" accept=".json,application/json" onChange={e => { clearCurrentResult(); setModule2File(e.target.files?.[0] ?? null) }}
-                className="w-full min-w-0 cursor-pointer text-sm text-gray-300 file:mr-4 file:cursor-pointer file:rounded-lg file:border-0 file:bg-purple-500/20 file:px-4 file:py-3 file:text-sm file:font-semibold file:text-purple-200 hover:file:bg-purple-500/30" />
+                className="w-full min-w-0 cursor-pointer text-sm text-white/80 file:mr-4 file:cursor-pointer file:rounded-lg file:border-0 file:bg-cyan-400/20 file:px-4 file:py-3 file:text-sm file:font-semibold file:text-white hover:file:bg-cyan-400/30" />
             </label>
-            <label className="flex min-w-0 flex-col gap-4 rounded-xl border border-dashed border-emerald-500/40 bg-emerald-500/5 p-6 transition hover:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-400">
-              <span className="flex items-center gap-3 text-lg font-semibold text-emerald-200"><Lock className="h-6 w-6 shrink-0" />Module 3 secure communication</span>
-              <span className="text-sm text-gray-400">Select the secure communication JSON file.</span>
+            <label className="integration-upload integration-upload-communication flex min-w-0 flex-col gap-4 rounded-xl border p-6 transition">
+              <span className="flex items-center gap-3 text-lg font-semibold text-white"><Lock className="h-6 w-6 shrink-0" />Module 3 secure communication</span>
+              <span className="text-sm text-white/65">Select the secure communication JSON file.</span>
               <input type="file" accept=".json,application/json" onChange={e => { clearCurrentResult(); setModule3File(e.target.files?.[0] ?? null) }}
-                className="w-full min-w-0 cursor-pointer text-sm text-gray-300 file:mr-4 file:cursor-pointer file:rounded-lg file:border-0 file:bg-emerald-500/20 file:px-4 file:py-3 file:text-sm file:font-semibold file:text-emerald-200 hover:file:bg-emerald-500/30" />
+                className="w-full min-w-0 cursor-pointer text-sm text-white/80 file:mr-4 file:cursor-pointer file:rounded-lg file:border-0 file:bg-cyan-400/20 file:px-4 file:py-3 file:text-sm file:font-semibold file:text-white hover:file:bg-cyan-400/30" />
             </label>
           </div>
-          <p className="text-sm leading-relaxed text-gray-400">Files are validated independently, matched by observation ID (or timestamp fallback), then processed through the HCRDM pipeline and recorded in the audit log.</p>
+          <p className="text-sm leading-relaxed text-white/65">Files are validated independently, matched by observation ID (or timestamp fallback), then processed through the HCRDM pipeline and recorded in the audit log.</p>
           <button onClick={handleFileEvaluate} disabled={loading}
-            className="flex min-h-14 w-full items-center justify-center gap-3 rounded-xl border border-cyan-400/50 bg-cyan-500/20 px-6 py-4 text-base font-bold text-cyan-200 transition hover:bg-cyan-500/30 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-400 disabled:cursor-wait disabled:opacity-50 sm:text-lg">
+            className="integration-run flex min-h-14 w-full items-center justify-center gap-3 rounded-xl border px-6 py-4 text-base font-bold transition disabled:cursor-wait disabled:opacity-50 sm:text-lg">
             <Zap className="h-5 w-5 shrink-0" />
             {loading ? 'PROCESSING...' : 'RUN FILE INTEGRATION'}
           </button>
           {integrationError && <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">{integrationError}</p>}
           {result?.integration_status === 'SUCCESS' && (
-            <div role="status" className="flex flex-wrap items-center gap-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4">
-              <p className="text-sm text-emerald-300">File integration succeeded using {result.match_method} matching.</p>
-              <button onClick={downloadResult} className="text-sm font-semibold text-cyan-300 underline hover:text-cyan-200">Download decision JSON</button>
+            <div role="status" className="flex flex-wrap items-center gap-4 rounded-lg border border-cyan-400/30 bg-cyan-400/10 p-4">
+              <p className="text-sm text-cyan-400">File integration succeeded using {result.match_method} matching.</p>
+              <button onClick={downloadResult} className="text-sm font-semibold text-cyan-400 underline hover:text-white">Download decision JSON</button>
             </div>
           )}
         </div>
@@ -443,7 +443,7 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
             <label className="block">
               <span className="text-gray-500">Observation ID</span>
               <input required value={request.rf_context.observation_id ?? ''} onChange={e => updateRF('observation_id', e.target.value)}
-                className="mt-0.5 w-full px-2 py-1.5 rounded bg-[#0a0e17] border border-gray-700 text-cyan-300 outline-none" />
+                className="mt-0.5 w-full px-2 py-1.5 rounded bg-cyber-bg border border-gray-700 text-cyan-300 outline-none" />
             </label>
             {([
               ['rssi', 'RSSI (dBm)'],
@@ -464,7 +464,7 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
                   max={field === 'packet_loss_pct' ? 100 : undefined}
                   value={request.rf_context[field] ?? ''}
                   onChange={e => updateRF(field, e.target.value === '' ? undefined : e.target.valueAsNumber)}
-                  className="mt-0.5 w-full px-2 py-1.5 rounded bg-[#0a0e17] border border-gray-700 text-gray-200 focus:border-cyan-500/50 outline-none"
+                  className="mt-0.5 w-full px-2 py-1.5 rounded bg-cyber-bg border border-gray-700 text-gray-200 focus:border-cyan-500/50 outline-none"
                 />
               </label>
             ))}
@@ -479,7 +479,7 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
               <span className="text-gray-500">Reported Threat Confidence (0–1, optional)</span>
               <input type="number" min="0" max="1" step="any" value={request.threat_intelligence.threat_confidence ?? ''}
                 onChange={e => updateTI('threat_confidence', e.target.value === '' ? null : e.target.valueAsNumber)}
-                className="mt-0.5 w-full px-2 py-1.5 rounded bg-[#0a0e17] border border-gray-700 text-gray-200 outline-none" />
+                className="mt-0.5 w-full px-2 py-1.5 rounded bg-cyber-bg border border-gray-700 text-gray-200 outline-none" />
               <span className="block mt-1 text-[10px] text-gray-500">Recorded as upstream evidence; it does not change the configured risk weights or decision confidence rules.</span>
             </label>
             <label className="block">
@@ -487,7 +487,7 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
               <select
                 value={request.threat_intelligence.classification}
                 onChange={e => updateTI('classification', e.target.value)}
-                className="mt-0.5 w-full px-2 py-1.5 rounded bg-[#0a0e17] border border-gray-700 text-gray-200 outline-none"
+                className="mt-0.5 w-full px-2 py-1.5 rounded bg-cyber-bg border border-gray-700 text-gray-200 outline-none"
               >
                 <option>Normal</option>
                 <option>Jamming</option>
@@ -499,7 +499,7 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
               <select
                 value={request.threat_intelligence.severity ?? ''}
                 onChange={e => updateTI('severity', e.target.value || null)}
-                className="mt-0.5 w-full px-2 py-1.5 rounded bg-[#0a0e17] border border-gray-700 text-gray-200 outline-none"
+                className="mt-0.5 w-full px-2 py-1.5 rounded bg-cyber-bg border border-gray-700 text-gray-200 outline-none"
               >
                 <option value="">None</option>
                 <option>Low</option>
@@ -514,7 +514,7 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
                 value={request.threat_intelligence.triggered_rule ?? ''}
                 onChange={e => updateTI('triggered_rule', e.target.value || null)}
                 placeholder="None"
-                className="mt-0.5 w-full px-2 py-1.5 rounded bg-[#0a0e17] border border-gray-700 text-gray-200 outline-none"
+                className="mt-0.5 w-full px-2 py-1.5 rounded bg-cyber-bg border border-gray-700 text-gray-200 outline-none"
               />
             </label>
             <div>
@@ -541,7 +541,7 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
                 <select
                   value={(request.secure_communication as unknown as Record<string, unknown>)[field] as string ?? ''}
                   onChange={e => updateSC(field, e.target.value || null)}
-                  className="mt-0.5 w-full px-2 py-1.5 rounded bg-[#0a0e17] border border-gray-700 text-gray-200 outline-none"
+                  className="mt-0.5 w-full px-2 py-1.5 rounded bg-cyber-bg border border-gray-700 text-gray-200 outline-none"
                 >
                   {options.map(o => <option key={o}>{o}</option>)}
                 </select>
@@ -686,7 +686,7 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
             </div>
 
             {/* Confidence */}
-            <div className="rounded-xl border border-gray-800 bg-[#111827] p-4 flex flex-col items-center justify-center">
+            <div className="rounded-xl border border-gray-800 bg-cyber-panel p-4 flex flex-col items-center justify-center">
               <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-2">Decision Confidence</p>
               <p className={`text-2xl font-bold ${confidenceColor(result.decision_confidence)}`}>
                 {result.decision_confidence}
@@ -697,7 +697,7 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
             </div>
 
             {/* Conflict */}
-            <div className={`rounded-xl border p-4 flex flex-col items-center justify-center ${result.evidence_conflict ? 'border-amber-500/40 bg-amber-500/10' : 'border-gray-800 bg-[#111827]'}`}>
+            <div className={`rounded-xl border p-4 flex flex-col items-center justify-center ${result.evidence_conflict ? 'border-amber-500/40 bg-amber-500/10' : 'border-gray-800 bg-cyber-panel'}`}>
               <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-2">Evidence Conflict</p>
               {result.evidence_conflict
                 ? <AlertTriangle className="w-6 h-6 text-amber-400" />

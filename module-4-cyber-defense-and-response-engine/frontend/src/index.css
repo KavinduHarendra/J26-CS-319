@@ -3,6 +3,7 @@
 @theme {
   --color-cyber-bg: #0a0e17;
   --color-cyber-panel: #111827;
+  --color-cyber-surface: #0d1726;
   --color-cyber-border: #1f2937;
   --color-cyber-accent: #06b6d4;
   --color-cyber-accent2: #8b5cf6;
@@ -17,8 +18,8 @@
 
 body {
   margin: 0;
-  background: #0a0e17;
-  color: #e5e7eb;
+  background: var(--color-cyber-bg);
+  color: var(--dashboard-text, #e5e7eb);
   font-family: 'Segoe UI', system-ui, sans-serif;
   min-height: 100vh;
 }
@@ -27,13 +28,112 @@ body {
   min-height: 100vh;
 }
 
+.integration-upload-intelligence,
+.integration-upload-communication {
+  --upload-accent: #60a5fa;
+  --upload-surface: #132744;
+  --upload-button: #234b7c;
+}
+
+.integration-upload {
+  background: var(--upload-surface);
+  border-color: var(--upload-accent);
+  border-top-width: 3px;
+}
+
+.integration-upload svg { color: var(--upload-accent); }
+.integration-upload input::file-selector-button {
+  background: var(--upload-button);
+  color: #ffffff;
+}
+.integration-upload input:hover::file-selector-button { background: var(--upload-button); filter: brightness(1.15); }
+.integration-upload:focus-within { outline: 2px solid var(--upload-accent); outline-offset: 3px; }
+
+.integration-run {
+  background: #22d3ee;
+  border-color: #67e8f9;
+  color: #082f49;
+}
+.integration-run:hover:not(:disabled) { background: #67e8f9; }
+.integration-run:focus-visible { outline: 2px solid #22d3ee; outline-offset: 4px; }
+
+:root[data-theme='light'] .integration-upload-intelligence,
+:root[data-theme='light'] .integration-upload-communication {
+  --upload-accent: #2563eb;
+  --upload-surface: #eff6ff;
+  --upload-button: #1d4ed8;
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #111827;
+  background: var(--color-cyber-panel);
+}
+
+:root {
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --dashboard-text: #172033;
+  --color-cyber-bg: #f1f5f9;
+  --color-cyber-panel: #ffffff;
+  --color-cyber-surface: #f8fafc;
+  --color-cyber-border: #d6dee8;
+  --color-white: #172033;
+  --color-gray-200: #243247;
+  --color-gray-300: #334155;
+  --color-gray-400: #475569;
+  --color-gray-500: #526176;
+  --color-gray-600: #64748b;
+  --color-gray-700: #c0ccd9;
+  --color-gray-800: #d6dee8;
+  --color-gray-900: #f1f5f9;
+  --color-cyan-200: #155e75;
+  --color-cyan-300: #0e7490;
+  --color-cyan-400: #0e7490;
+  --color-emerald-300: #047857;
+  --color-emerald-400: #047857;
+  --color-red-300: #b91c1c;
+  --color-red-400: #b91c1c;
+  --color-orange-300: #9a3412;
+  --color-orange-400: #9a3412;
+  --color-yellow-300: #854d0e;
+  --color-yellow-400: #854d0e;
+  --color-amber-300: #92400e;
+  --color-amber-400: #92400e;
+  --color-purple-400: #7e22ce;
+  --color-blue-300: #1d4ed8;
+}
+
+.theme-toggle {
+  position: fixed;
+  top: 14px;
+  right: 18px;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--color-cyber-border);
+  border-radius: 50%;
+  background: var(--color-cyber-panel);
+  color: var(--color-cyan-400);
+  cursor: pointer;
+  box-shadow: 0 2px 8px #00000014;
+}
+
+.theme-toggle:hover { border-color: var(--color-cyan-400); }
+.theme-toggle:focus-visible { outline: 2px solid var(--color-cyan-400); outline-offset: 3px; }
+
+:root[data-theme='light'] .recharts-default-tooltip {
+  background: var(--color-cyber-panel) !important;
+  border-color: var(--color-cyber-border) !important;
+  color: var(--dashboard-text);
 }
 
 ::-webkit-scrollbar-thumb {

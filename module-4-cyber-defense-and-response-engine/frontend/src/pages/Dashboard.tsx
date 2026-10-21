@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { Activity, Radio, ShieldAlert, FileText, ArrowRight, RefreshCw } from 'lucide-react'
 import { fetchEvaluateIncidents } from '../api'
@@ -10,8 +10,9 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null)
   const loadData = useCallback(async () => {
     try {
-      const data = await fetchEvaluateIncidents(100)
-      setIncidents(data.incidents)
+      const data = await fetchEvaluateIncidents(9999)
+      setIncidents([...data.incidents].sort((a, b) =>
+        Number(String(a.incident_id).slice(4)) - Number(String(b.incident_id).slice(4))))
       setError(null)
     } catch {
       setError('Unable to load audit records. Check that the backend is running, then refresh.')
@@ -64,14 +65,15 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         {[
           { icon: Radio, label: 'Evidence Correlation', sub: 'Module 2 + Module 3', color: 'text-cyan-400' },
-          { icon: ShieldAlert, label: 'Risk Assessment', sub: 'Explainable Scoring', color: 'text-purple-400' },
-          { icon: Activity, label: 'Response Selection', sub: 'Recommendations Only', color: 'text-amber-400' },
-          { icon: FileText, label: 'Decision & Audit', sub: 'SQLite Records', color: 'text-emerald-400' },
-        ].map(({ icon: Icon, label, sub, color }) => <div key={label} className="bg-[#111827] border border-gray-800 rounded-xl p-4 text-center">
+          { icon: ShieldAlert, label: 'Risk Assessment', sub: 'Explainable Scoring', color: 'text-cyan-400' },
+          { icon: Activity, label: 'Response Selection', sub: 'Recommendations Only', color: 'text-cyan-400' },
+          { icon: FileText, label: 'Decision & Audit', sub: 'SQLite Records', color: 'text-cyan-400' },
+        ].map(({ icon: Icon, label, sub, color }) => <div key={label} className="bg-cyber-panel border border-gray-800 rounded-xl p-4 text-center">
           <Icon className={`w-6 h-6 mx-auto mb-2 ${color}`} /><p className="text-xs font-semibold text-gray-200">{label}</p><p className="text-[10px] text-gray-500 mt-1">{sub}</p>
         </div>)}
       </div>
       <Panel title="INCIDENT AUDIT LOG">
+        <p className="mb-3 text-xs text-gray-400">Incidents listed by ID, from INC-0001 to INC-9999. {incidents.length} recorded.</p>
         <div className="flex justify-end mb-3"><button onClick={loadData} className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-gray-700 text-gray-400 hover:text-gray-200"><RefreshCw className="w-3 h-3" /> Refresh</button></div>
         {incidents.length === 0 ? <p className="text-sm text-gray-500 text-center py-6">No incidents yet. Run a defense evaluation to populate the audit log.</p> : <div className="overflow-x-auto">
           <table className="w-full text-xs">
