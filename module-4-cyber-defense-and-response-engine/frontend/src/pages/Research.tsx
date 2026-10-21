@@ -98,7 +98,7 @@ export default function Research() {
             { action: 'Recommend', desc: 'Channel switch, safe mode, operator alerts' },
             { action: 'Monitor', desc: 'Record evidence, risk, selected response, and explanations' },
           ].map(({ action, desc }) => (
-            <div key={action} className="p-3 rounded-lg bg-[#0a0e17] border border-gray-800">
+            <div key={action} className="p-3 rounded-lg bg-cyber-bg border border-gray-800">
               <p className="text-cyan-400 font-semibold text-sm">{action}</p>
               <p className="text-xs text-gray-500 mt-1">{desc}</p>
             </div>

@@ -1,9 +1,12 @@
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import {
   LayoutDashboard,
   FlaskConical,
   Shield,
   Zap,
+  Sun,
+  Moon,
 } from 'lucide-react'
 
 const nav = [
@@ -13,9 +16,28 @@ const nav = [
 ]
 
 export default function Layout() {
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    try { return localStorage.getItem('dashboard-theme') === 'light' ? 'light' : 'dark' }
+    catch { return 'dark' }
+  })
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    try { localStorage.setItem('dashboard-theme', theme) } catch { /* Theme still works without storage. */ }
+  }, [theme])
+
   return (
-    <div className="flex min-h-screen bg-[#0a0e17]">
-      <aside className="w-64 shrink-0 border-r border-gray-800 bg-[#0d1321] flex flex-col">
+    <div className="flex min-h-screen bg-cyber-bg">
+      <button
+        type="button"
+        className="theme-toggle"
+        onClick={() => setTheme(current => current === 'dark' ? 'light' : 'dark')}
+        aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+        title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+      >
+        {theme === 'dark' ? <Sun size={18} aria-hidden="true" /> : <Moon size={18} aria-hidden="true" />}
+      </button>
+      <aside className="w-64 shrink-0 border-r border-gray-800 bg-cyber-surface flex flex-col">
         <div className="p-5 border-b border-gray-800">
           <div className="flex items-start gap-2 text-cyan-400">
             <Shield className="w-7 h-7 shrink-0" />
@@ -48,7 +70,7 @@ export default function Layout() {
       </aside>
 
       <main className="flex-1 overflow-auto">
-        <div className="p-6 max-w-7xl mx-auto">
+        <div className="p-6 pt-16 max-w-7xl mx-auto">
           <Outlet />
         </div>
       </main>

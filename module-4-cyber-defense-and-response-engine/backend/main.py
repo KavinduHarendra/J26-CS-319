@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 # Module 4 imports
 from models.defense import EvaluateRequest
@@ -29,6 +30,11 @@ app.add_middleware(
 )
 
 # Initialise SQLite database on startup
+@app.exception_handler(audit_service.IncidentLimitError)
+async def incident_limit_handler(request, exc):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
 @app.on_event("startup")
 def startup():
     audit_service.init_db()

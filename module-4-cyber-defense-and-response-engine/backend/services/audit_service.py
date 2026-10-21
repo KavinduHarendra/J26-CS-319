@@ -22,10 +22,17 @@ from models.defense import EvaluateResponse
 DB_PATH = Path(__file__).resolve().parents[1] / "database" / "incidents.db"
 
 _incident_counter = 0
+MAX_INCIDENTS = 9999
+
+
+class IncidentLimitError(Exception):
+    """The four-digit incident ID range has been exhausted."""
 
 
 def get_next_incident_id() -> str:
     global _incident_counter
+    if _incident_counter >= MAX_INCIDENTS:
+        raise IncidentLimitError("Incident limit reached (INC-9999). Export the audit log before clearing history to start a new sequence.")
     _incident_counter += 1
     return f"INC-{str(_incident_counter).zfill(4)}"
 
