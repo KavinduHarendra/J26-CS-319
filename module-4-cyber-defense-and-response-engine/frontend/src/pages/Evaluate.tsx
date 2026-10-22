@@ -19,8 +19,6 @@ const DEFAULT_REQUEST: EvaluateRequest = {
   rf_context: {
     observation_id: 'OBS-DEMO-001',
     timestamp: new Date().toISOString(),
-    rssi: -62.0, snr: 33.0, noise_floor: -95.0, packet_rate: 99.0,
-    frequency_mhz: 2400.0,
   },
   threat_intelligence: {
     classification: 'Normal',
@@ -361,9 +359,6 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
       </header>
 
 
-      {/* ── Pipeline Visualization ── */}
-      <PipelineViz active={!!result} />
-
       {mode === 'files' && (<section aria-labelledby="file-integration-title" className="overflow-hidden rounded-2xl border border-cyan-400/30 bg-cyber-surface ">
         <div className="border-b border-cyan-400/20 bg-cyber-surface px-6 py-6 sm:px-8">
           <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-cyan-400">Module 2 + Module 3 JSON</p>
@@ -387,8 +382,8 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
           </div>
           <p className="text-sm leading-relaxed text-white/65">Files are validated independently, matched by observation ID (or timestamp fallback), then processed through the HCRDM pipeline and recorded in the audit log.</p>
           <button onClick={handleFileEvaluate} disabled={loading}
-            className="integration-run flex min-h-14 w-full items-center justify-center gap-3 rounded-xl border px-6 py-4 text-base font-bold transition disabled:cursor-wait disabled:opacity-50 sm:text-lg">
-            <Zap className="h-5 w-5 shrink-0" />
+            className="integration-run mx-auto flex min-h-10 w-fit max-w-full items-center justify-center gap-2 rounded-lg border px-5 py-2 text-sm font-bold transition disabled:cursor-wait disabled:opacity-50">
+            <Zap className="h-4 w-4 shrink-0" />
             {loading ? 'PROCESSING...' : 'RUN FILE INTEGRATION'}
           </button>
           {integrationError && <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">{integrationError}</p>}
@@ -432,19 +427,22 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
         </div>
       </Panel>
 
-      {/* ── Three Input Panels + Evaluate Button ── */}
+      {/* Two upstream module inputs; Module 2 carries optional RF context. */}
       <form onSubmit={event => { event.preventDefault(); void handleEvaluate() }} className="space-y-4">
       <h2 className="text-lg font-semibold text-gray-200">Manual Input Configuration</h2>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <p className="text-xs text-gray-400">Enter Module 2 threat intelligence and Module 3 secure communication data. Optional RF measurements belong to the Module 2 input; no separate Module 1 input is required.</p>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
-        {/* Panel 1: RF Context */}
-        <Panel title="SDR RF CONTEXT — Module 1 (Mock Input)">
+        {/* Module 2 includes observation metadata and optional RF measurements. */}
+        <Panel title="AI THREAT INTELLIGENCE — Module 2">
           <div className="space-y-2 text-xs">
             <label className="block">
               <span className="text-gray-500">Observation ID</span>
               <input required value={request.rf_context.observation_id ?? ''} onChange={e => updateRF('observation_id', e.target.value)}
                 className="mt-0.5 w-full px-2 py-1.5 rounded bg-cyber-bg border border-gray-700 text-cyan-300 outline-none" />
             </label>
+            <details>
+              <summary className="cursor-pointer py-2 text-gray-300">Optional RF context supplied with Module 2</summary>
             {([
               ['rssi', 'RSSI (dBm)'],
               ['snr', 'SNR (dB)'],
@@ -468,13 +466,8 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
                 />
               </label>
             ))}
-            <p className="text-[10px] text-gray-500 pt-2">RF measurements provide supporting context and audit evidence. Risk weights use the Module 2 and Module 3 states.</p>
-          </div>
-        </Panel>
-
-        {/* Panel 2: Threat Intelligence */}
-        <Panel title="AI THREAT INTELLIGENCE — Module 2 (Mock Input)">
-          <div className="space-y-2 text-xs">
+            <p className="text-[10px] text-gray-500 pt-2">Enter measured values from Module 2 RF context only when available. These are supporting evidence; risk weights use the Module 2 and Module 3 states.</p>
+            </details>
             <label className="block">
               <span className="text-gray-500">Reported Threat Confidence (0–1, optional)</span>
               <input type="number" min="0" max="1" step="any" value={request.threat_intelligence.threat_confidence ?? ''}
@@ -526,9 +519,16 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
           </div>
         </Panel>
 
-        {/* Panel 3: Secure Communication */}
-        <Panel title="SECURE COMMUNICATION — Module 3 (Mock Input)">
+        {/* Module 3: Secure Communication */}
+        <Panel title="SECURE COMMUNICATION — Module 3">
           <div className="space-y-2 text-xs">
+            <label className="block">
+              <span className="text-gray-500">Observation ID</span>
+              <input readOnly value={request.rf_context.observation_id ?? ''}
+                aria-describedby="module3-observation-help"
+                className="mt-0.5 w-full px-2 py-1.5 rounded bg-cyber-bg border border-gray-700 text-cyan-300 outline-none" />
+              <span id="module3-observation-help" className="block mt-1 text-[10px] text-gray-500">Automatically matches the Module 2 observation ID.</span>
+            </label>
             {([
               ['link_state', 'Link State', ['TRUSTED', 'DEGRADED', 'SUSPICIOUS', 'UNTRUSTED']],
               ['freshness_state', 'Freshness', ['FRESH', 'STALE', 'REPLAY']],
@@ -599,7 +599,7 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
           {/* ── Three source + correlation panels ── */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* RF Context Summary */}
-            <Panel title="NORMALIZED EVIDENCE — Module 1 RF Context">
+            <Panel title="NORMALIZED EVIDENCE — RF Context Supplied with Module 2">
               <StatRow label="Observation ID" value={result.observation_id} />
               {Object.entries(result.module1_context).map(([k, v]) =>
                 v != null && k !== 'observation_id' && k !== 'timestamp'
@@ -839,6 +839,9 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
           </div>
         </Panel>
       )}
+
+      {/* Pipeline visualization follows the risk history section. */}
+      <PipelineViz active={!!result} />
 
       {!result && (
         <Panel title="MODULE 4 — DECISION PIPELINE">
