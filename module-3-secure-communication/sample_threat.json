@@ -15,8 +15,8 @@
   "evidence": [
     "ILLUSTRATIVE ONLY — replace with a real Threat Intelligence record."
   ],
-  "snr_db": null,
-  "rssi_dbm": null,
-  "noise_floor_dbm": null,
-  "rf_trend": null
+  "snr_db": 1.1,
+  "rssi_dbm": 2.2,
+  "noise_floor_dbm": 3.3,
+  "rf_trend": 4.4
 }
