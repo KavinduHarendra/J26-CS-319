@@ -48,4 +48,6 @@ def summary_dict(rf: RFContext) -> dict:
         "packet_loss_pct": rf.packet_loss_pct,
         "latency_ms": rf.latency_ms,
         "channel_condition": rf.channel_condition,
+        "interference_level": rf.interference_level,
+        "distance_m": rf.distance_m,
     }

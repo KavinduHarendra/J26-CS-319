@@ -600,12 +600,25 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* RF Context Summary */}
             <Panel title="NORMALIZED EVIDENCE — RF Context Supplied with Module 2">
-              <StatRow label="Observation ID" value={result.observation_id} />
-              {Object.entries(result.module1_context).map(([k, v]) =>
-                v != null && k !== 'observation_id' && k !== 'timestamp'
-                  ? <StatRow key={k} label={k.replace(/_/g, ' ')} value={String(v)} />
-                  : null
-              )}
+              {([
+                ['observation_id', 'Observation ID', ''],
+                ['timestamp', 'Observation Timestamp', ''],
+                ['rssi', 'RSSI', ' dBm'],
+                ['snr', 'SNR', ' dB'],
+                ['noise_floor', 'Noise Floor', ' dBm'],
+                ['packet_rate', 'Packet Rate', ' packets/s'],
+                ['frequency_mhz', 'Frequency', ' MHz'],
+                ['bandwidth_mhz', 'Bandwidth', ' MHz'],
+                ['packet_loss_pct', 'Packet Loss', '%'],
+                ['latency_ms', 'Latency', ' ms'],
+                ['interference_level', 'Interference Level', ''],
+                ['channel_condition', 'Channel Condition', ''],
+                ['distance_m', 'Distance', ' m'],
+              ]).filter(([key]) => result.module1_context[key] != null && result.module1_context[key] !== '').map(([key, label, unit]) => (
+                <StatRow key={key} label={label} value={
+                  String(result.module1_context[key]) + unit
+                } />
+              ))}
             </Panel>
 
             {/* Threat Intelligence Summary */}
@@ -619,11 +632,17 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
                   ? <SeverityBadge severity={result.correlation.module2_severity} />
                   : <span className="text-gray-500">None</span>
               } />
-              {(result.module2_context.triggered_rule as string) && (
-                <StatRow label="Triggered Rule" value={result.module2_context.triggered_rule as string} highlight />
-              )}
+              <StatRow label="Triggered Rule" value={(result.module2_context.triggered_rule as string) || 'None'} highlight />
+              <StatRow label="Abnormal Features" value={(result.module2_context.abnormal_features as string[] | undefined)?.join(', ') || 'None reported'} />
+              <p className="text-xs text-gray-400 mt-3 mb-1">Statistical Deviation</p>
+              {(['rssi', 'snr', 'noise_floor', 'packet_rate']).map(key => (
+                <StatRow key={key} label={key.replace(/_/g, ' ')} value={
+                  (result.module2_context.statistical_deviation as Record<string, number | null> | null)?.[key] ?? 'Not supplied'
+                } />
+              ))}
+              <p className="text-xs text-gray-400 mt-3">Threat Evidence</p>
               <div className="mt-2">
-                {((result.module2_context.evidence as string[]) || []).map((ev: string, i: number) => (
+                {((result.module2_context.evidence as string[]) || []).filter(ev => !/^Synthetic test:/i.test(ev.trim())).map((ev: string, i: number) => (
                   <p key={i} className="text-[11px] text-gray-400 mt-1">• {ev}</p>
                 ))}
               </div>
@@ -640,11 +659,9 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
                   ? <span className="text-red-400 font-bold">YES — REPLAY ATTACK</span>
                   : <span className="text-emerald-400">No</span>
               } />
-              {(result.module3_context.comm_decision as string) && (
-                <StatRow label="Comm Decision" value={result.module3_context.comm_decision as string} />
-              )}
+              <StatRow label="Comm Decision" value={(result.module3_context.comm_decision as string) || 'Not supplied'} />
               <div className="mt-2">
-                {((result.module3_context.link_evidence as string[]) || []).filter(ev => !ev.includes('[MOCK]')).map((ev: string, i: number) => (
+                {((result.module3_context.link_evidence as string[]) || []).filter(ev => !ev.includes('[MOCK]') && !/^Synthetic communication state for /i.test(ev.trim())).map((ev: string, i: number) => (
                   <p key={i} className="text-[11px] text-gray-400 mt-1">• {ev}</p>
                 ))}
               </div>
@@ -663,7 +680,7 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
                     <div className="h-full bg-cyan-500 rounded-full" style={{ width: `${src.normalized_score}%` }} />
                   </div>
                   <ul className="mt-1">
-                    {src.evidence.slice(0, 3).map((ev, i) => (
+                    {src.evidence.filter(ev => !/^Synthetic (test:|communication state for )/i.test(ev.trim())).slice(0, 3).map((ev, i) => (
                       <li key={i} className="text-[10px] text-gray-500">• {ev}</li>
                     ))}
                   </ul>
@@ -674,6 +691,22 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
                   <p className="text-[11px] text-cyan-400">Evidence alignment indicator: {result.correlation.correlated_risk_boost}. Shown as correlation context; the risk score uses the breakdown below.</p>
                 </div>
               )}
+              <div className="mt-4 rounded-lg border border-gray-700 bg-cyber-surface p-4">
+                <h4 className="text-sm font-semibold text-gray-200">How your risk-scoring rules are defined</h4>
+                <p className="mt-2 text-sm font-mono text-cyan-400">Risk = min(100, C + S + L + F + A + I)</p>
+                <p className="mt-2 text-xs text-gray-400">Each input state contributes configured points. Add the six contributions and cap the total at 100.</p>
+                <ul className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-gray-300">
+                  <li>C = Threat classification: {result.risk_breakdown.classification_points} points</li>
+                  <li>S = Threat severity: {result.risk_breakdown.severity_points} points</li>
+                  <li>L = Communication link state: {result.risk_breakdown.link_state_points} points</li>
+                  <li>F = Message freshness: {result.risk_breakdown.freshness_points} points</li>
+                  <li>A = Authentication status: {result.risk_breakdown.auth_points} points</li>
+                  <li>I = Integrity status: {result.risk_breakdown.integrity_points} points</li>
+                </ul>
+                <p className="mt-3 text-xs text-cyan-400">
+                  Current calculation: min(100, {result.risk_breakdown.classification_points} + {result.risk_breakdown.severity_points} + {result.risk_breakdown.link_state_points} + {result.risk_breakdown.freshness_points} + {result.risk_breakdown.auth_points} + {result.risk_breakdown.integrity_points}) = {result.risk_score}
+                </p>
+              </div>
               <p className="text-[9px] text-gray-600 mt-2">Research contribution: multi-source correlation detects cases a single-source engine would miss</p>
             </Panel>
 
