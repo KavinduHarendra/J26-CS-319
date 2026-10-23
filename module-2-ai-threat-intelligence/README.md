@@ -16,11 +16,12 @@ caused the decision.
 
 ```text
 ai-threat-intel-module/
-|-- src/          Core detection, validation, baseline, and audit code
+|-- src/          Core detection, validation, baseline, exchange, and audit code
+|-- integration/  Mock Module 1, 3, and 4 file-exchange components
 |-- tests/        Pytest test suite
-|-- scripts/      Dataset, calibration, and demonstration scripts
-|-- data/         Local datasets and runtime audit records
-|-- demo.py       Interactive terminal demonstration
+|-- scripts/      Dataset and calibration scripts
+|-- data/         Local datasets and runtime exchange records
+|-- demo.py       Unified one-window integration demonstration
 |-- requirements.txt
 `-- README.md
 ```
@@ -41,10 +42,55 @@ Run the tests:
 python -m pytest -q
 ```
 
-Run the demonstration:
+Run the complete demonstration in one terminal window:
 
 ```powershell
 python demo.py
+```
+
+## Unified integration demo
+
+`demo.py` is the central dashboard and main demonstration command. It runs a
+mock Module 1 producer, the real Module 2 pipeline, and mock Module 3 and Module
+4 receivers together. The Rich dashboard keeps overall system state, the live
+component pipeline, classifications, signal evidence, processing times, file
+queues, and mock receiver decisions in one clean view.
+No server or network connection is used. JSON files are exchanged atomically
+under `data/exchange/` and moved into processed or received folders.
+
+```powershell
+python demo.py
+```
+
+Use `--plain` for line-oriented output, `--keep` to preserve existing exchange
+files, and `--count` when a fixed-length demonstration is needed. With no
+options, the mock Module 1 schedule repeats continuously until Ctrl+C. For
+example, `python demo.py --count 150 --rate 20` performs one fixed 150-capture
+run. The older `file_exchange_demo.py` command remains as a compatibility
+launcher and opens the same application.
+
+When the real Module 1 producer is available, start the dashboard without the
+mock input generator:
+
+```powershell
+python demo.py --external-module1
+```
+
+In this mode Module 2 continuously watches `data/exchange/module1_to_module2/`
+for observation JSON files until Ctrl+C.
+
+The interactive dashboard remains open after the capture run finishes so the
+final classifications and processing statistics can be reviewed. Press Ctrl+C
+to close it. For scripts or automated runs, add `--exit-on-complete`; plain mode
+also exits automatically when processing is complete.
+
+The standalone mock components can also be run in separate terminals:
+
+```powershell
+python integration/file_mock_module1.py --rate 5 --count 150
+python -m src.file_processor
+python integration/file_mock_receiver.py --module 3
+python integration/file_mock_receiver.py --module 4
 ```
 
 ## Input validation
