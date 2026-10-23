@@ -1,209 +1,229 @@
+import hashlib
 import json
-import time
-from datetime import datetime, timezone
+from typing import Any
 
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 
-st.set_page_config(page_title="Secure UAV Communication", page_icon="🛡️", layout="wide")
-st.title("🛡️ Secure UAV Communication")
-st.caption("Jamming-aware response prototype · Upload → Scan → Generate proposed configuration")
+st.set_page_config(
+    page_title="Secure UAV Communication",
+    page_icon="🛡️",
+    layout="wide",
+)
 
-def normalize_json(payload):
+def normalize_records(payload: Any) -> list[dict]:
     if isinstance(payload, dict):
+        return [payload]
+    if isinstance(payload, list) and payload and all(isinstance(item, dict) for item in payload):
         return payload
-    if isinstance(payload, list) and payload and all(isinstance(x, dict) for x in payload):
-        return payload[-1]
-    raise ValueError("Upload a JSON object or a non-empty list of JSON objects.")
+    if payload == []:
+        raise ValueError("JSON list is empty.")
+    raise ValueError("JSON must contain one JSON object or a list of JSON objects.")
 
-def pick(data, *names):
-    for name in names:
-        value = data.get(name)
+def first_present(record: dict, *keys: str, default=None):
+    for key in keys:
+        value = record.get(key)
         if value is not None and value != "":
             return value
-    return None
+    return default
 
-def valid_record(data):
-    errors = []
-    classification = str(data.get("classification", "")).strip().lower()
-    severity = data.get("severity")
-    if classification not in {"jamming", "normal", "abnormal"}:
-        errors.append("classification must be jamming, normal, or abnormal.")
-    if "severity" not in data:
-        errors.append("severity field is required (use null if unavailable).")
-    elif severity is not None and str(severity).lower() not in {"high", "medium", "low"}:
-        errors.append("severity must be high, medium, low, or null.")
-    return errors
-
-def make_response(data, rf):
-    classification = str(data.get("classification", "")).lower()
-    severity = str(data.get("severity") or "null").lower()
-    if classification != "jamming" or severity != "high":
-        return {
-            "response_required": False,
-            "response_mode": "no_new_configuration",
-            "reason": f"Current policy generates a new configuration only for jamming + high severity (received {classification} + {severity}).",
-            "observation_id": data.get("observation_id"),
-            "generated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        }
-    snr, rssi, noise, trend = rf["snr_db"], rf["rssi_dbm"], rf["noise_floor_dbm"], rf["trend"]
-    degraded = (str(trend or "").lower() == "degrading") or (snr is not None and snr < 8) or (
-        rssi is not None and noise is not None and rssi < -85 and noise > -95
-    )
-    return {
-        "response_required": True,
-        "response_mode": "high_risk_adaptive_link",
-        "observation_id": data.get("observation_id"),
-        "source_timestamp": data.get("timestamp"),
-        "security": {"encryption": "maintain_enabled", "authentication": "maintain_enabled"},
-        "link_adaptation": {
-            "error_correction": "increased_if_supported" if degraded else "standard_or_adaptive",
-            "data_rate": "reduced_if_supported" if degraded else "maintain_or_adapt",
-            "backup_link": "use_if_available_and_validated",
-        },
-        "rf_context": rf,
-        "reason": "Threat Intelligence reports high-severity jamming; RF fields tailor the proposed response where available.",
-        "execution_status": "proposed_only_not_applied_to_radio",
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    }
-
-def val(value, unit=""):
+def display_value(value: Any, unit: str = "") -> str:
     if value is None or value == "":
         return "--"
     if isinstance(value, (int, float)) and unit:
         return f"{value:g} {unit}"
     return str(value)
 
-st.subheader("1. Upload Threat Intelligence JSON")
-uploaded = st.file_uploader("Choose a JSON file", type=["json"])
+def validate_record(record: dict, index: int) -> list[str]:
+    errors = []
+    classification = str(record.get("classification", "")).strip().lower()
+    severity = record.get("severity")
+    if classification not in {"jamming", "normal", "abnormal"}:
+        errors.append(
+            f"Record {index}: classification must be 'jamming', 'normal', or 'abnormal'. "
+            f"Found: {record.get('classification', '(missing)')!r}"
+        )
+    if "severity" not in record:
+        errors.append(f"Record {index}: missing 'severity' field. Use null if unknown.")
+    elif severity is not None and str(severity).strip().lower() not in {"high", "medium", "low"}:
+        errors.append(f"Record {index}: severity must be high, medium, low, or null.")
+    return errors
 
-if uploaded is None:
-    for key in ["uploaded_bytes", "scan_record", "response", "rf", "build_deadline", "build_done", "scan_error"]:
-        st.session_state.pop(key, None)
-    st.info("Upload a JSON file to begin. Threat details and RF measurements remain -- until you scan it.")
-    left, right = st.columns(2)
-    with left:
-        st.markdown("### Current Threat Status")
-        st.warning("PENDING")
-        st.caption("Waiting for a JSON record.")
-    with right:
-        st.markdown("### Secure Communication")
-        st.warning("PENDING")
-        st.caption("No verified secure-link handshake yet.")
-    st.markdown("### RF Measurements")
+def get_rf(record: dict) -> dict:
+    return {
+        "SNR": first_present(record, "snr_db", "snr", "SNR", "signal_to_noise_db"),
+        "RSSI": first_present(record, "rssi_dbm", "rssi", "RSSI"),
+        "Noise Floor": first_present(record, "noise_floor_dbm", "noise_floor", "noise_floor_db"),
+        "RF Trend": first_present(record, "rf_trend", "trend", "rfTrend"),
+    }
+
+def threat_status(record: dict) -> tuple[str, str]:
+    classification = str(record.get("classification", "")).strip().lower()
+    if classification == "jamming":
+        return "DETECTED", "Uploaded record is labelled as jamming."
+    if classification == "abnormal":
+        return "ABNORMAL", "Uploaded record is labelled as abnormal."
+    if classification == "normal":
+        return "NORMAL", "Uploaded record is labelled as normal."
+    return "PENDING", "Classification is not available."
+
+def response_decision(record: dict) -> tuple[str, str, str]:
+    classification = str(record.get("classification", "")).strip().lower()
+    severity = str(record.get("severity") or "").strip().lower()
+    if classification == "jamming" and severity == "high":
+        return ("HIGH-PRIORITY RESPONSE RECOMMENDED",
+                "The uploaded record indicates high-severity jamming. Validate source data before taking action.", "error")
+    if classification == "jamming" and severity == "medium":
+        return ("REVIEW LINK CONDITIONS",
+                "The uploaded record indicates medium-severity jamming. Review available measurements and evidence.", "warning")
+    if classification == "jamming" and severity == "low":
+        return ("MONITOR",
+                "The uploaded record indicates low-severity jamming. Validate with more observations.", "warning")
+    if classification == "normal":
+        return ("NO THREAT RESPONSE INDICATED",
+                "The uploaded record is labelled normal; this does not guarantee that a real link is safe.", "success")
+    if classification == "abnormal":
+        return ("INVESTIGATE ANOMALY",
+                "The record is abnormal, but the supplied fields do not establish a specific response.", "warning")
+    return ("AWAITING CLASSIFICATION", "No response decision can be made.", "info")
+
+st.title("🛡️ Secure UAV Communication Dashboard")
+st.caption("Jamming-aware monitoring · JSON analysis prototype")
+st.info(
+    "Upload your JSON file and click **Scan Uploaded Data**. Results are calculated from the uploaded data. "
+    "This button does not scan live RF signals."
+)
+
+uploaded_file = st.file_uploader("Upload Threat Intelligence JSON", type=["json"])
+
+if uploaded_file is None:
+    st.info("Upload a .json file to begin.")
+    st.subheader("Dashboard preview")
+    c1, c2 = st.columns(2)
+    c1.metric("Current Threat Status", "PENDING")
+    c2.metric("Secure Communication", "PENDING")
+    st.subheader("RF Measurements")
     cols = st.columns(4)
-    for c, label, unit in zip(cols, ["SNR", "RSSI", "Noise Floor", "RF Trend"], ["dB", "dBm", "dBm", ""]):
-        c.metric(label, "--" if not unit else f"-- {unit}")
-    st.markdown("### Adaptive Response Decision")
-    st.info("Awaiting JSON upload.")
+    for col, label, unit in zip(cols, ["SNR", "RSSI", "Noise Floor", "RF Trend"], ["dB", "dBm", "dBm", ""]):
+        col.metric(label, f"-- {unit}".strip())
     st.stop()
 
-file_bytes = uploaded.getvalue()
-if st.session_state.get("uploaded_bytes") != file_bytes:
-    st.session_state["uploaded_bytes"] = file_bytes
-    for key in ["scan_record", "response", "rf", "build_deadline", "build_done", "scan_error"]:
-        st.session_state.pop(key, None)
+file_bytes = uploaded_file.getvalue()
+file_hash = hashlib.sha256(file_bytes).hexdigest()
 
-st.success(f"File selected: {uploaded.name}")
-if st.button("🔎 Scan Uploaded Data", type="primary", use_container_width=True):
+# Reset the previous scan result if a different file is selected.
+if st.session_state.get("scanned_file_hash") != file_hash:
+    st.session_state.pop("scanned_records", None)
+    st.session_state.pop("scanned_file_hash", None)
+
+scan_clicked = st.button("🔎 Scan Uploaded Data", type="primary", use_container_width=True)
+
+if scan_clicked:
     try:
         payload = json.loads(file_bytes.decode("utf-8-sig"))
-        record = normalize_json(payload)
-        errors = valid_record(record)
+        records = normalize_records(payload)
+        errors = []
+        for i, rec in enumerate(records, start=1):
+            errors.extend(validate_record(rec, i))
         if errors:
-            st.session_state["scan_error"] = errors
-            st.session_state.pop("scan_record", None)
+            st.session_state.pop("scanned_records", None)
+            st.error("The JSON file was read, but its fields need fixing:")
+            for err in errors:
+                st.write(f"- {err}")
         else:
-            st.session_state["scan_record"] = record
-            st.session_state.pop("scan_error", None)
-            rf = {
-                "snr_db": pick(record, "snr_db", "snr", "SNR", "signal_to_noise_db"),
-                "rssi_dbm": pick(record, "rssi_dbm", "rssi", "RSSI"),
-                "noise_floor_dbm": pick(record, "noise_floor_dbm", "noise_floor", "noise_floor_db", "noiseFloor"),
-                "trend": pick(record, "rf_trend", "trend", "rfTrend"),
-            }
-            st.session_state["rf"] = rf
-            response = make_response(record, rf)
-            st.session_state["response"] = response
-            st.session_state.pop("build_done", None)
-            if response["response_required"]:
-                st.session_state["build_deadline"] = time.time() + 15
-            else:
-                st.session_state.pop("build_deadline", None)
+            st.session_state["scanned_records"] = records
+            st.session_state["scanned_file_hash"] = file_hash
+            st.success(f"Scan complete: JSON parsed and validated. {len(records)} record(s) found.")
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-        st.session_state["scan_error"] = [str(exc)]
-        st.session_state.pop("scan_record", None)
+        st.session_state.pop("scanned_records", None)
+        st.error(f"Could not scan this file: {exc}")
 
-if st.session_state.get("scan_error"):
-    st.error("JSON validation failed.")
-    for error in st.session_state["scan_error"]:
-        st.write(f"- {error}")
+records = st.session_state.get("scanned_records")
+if not records or st.session_state.get("scanned_file_hash") != file_hash:
+    st.warning("File uploaded. Click **Scan Uploaded Data** to show its results below.")
     st.stop()
 
-record = st.session_state.get("scan_record")
-if record is None:
-    st.info("File uploaded. Click Scan Uploaded Data to validate and show the fields.")
-    st.stop()
+record = records[-1]
+classification = str(record.get("classification", "")).strip().lower()
+severity = record.get("severity")
+status, status_note = threat_status(record)
 
-rf = st.session_state["rf"]
-response = st.session_state["response"]
-classification = str(record.get("classification", "")).lower()
-severity = str(record.get("severity") or "null").lower()
+st.success(f"JSON scanned successfully · {len(records)} record(s) found")
+st.caption("Summary below uses the last record in the JSON file.")
 
-st.success("JSON scanned and validated.")
-st.caption(f"Observation ID: {record.get('observation_id', '--')} · Timestamp: {record.get('timestamp', '--')}")
-
-left, right = st.columns(2)
-with left:
-    st.markdown("### Current Threat Status")
-    if classification == "jamming":
-        st.error(f"DETECTED · {severity.upper()} SEVERITY JAMMING")
-    elif classification == "abnormal":
-        st.warning("ABNORMAL")
+st.subheader("Current status")
+c1, c2 = st.columns(2)
+with c1:
+    st.markdown("#### Current Threat Status")
+    if status == "DETECTED":
+        st.error(status)
+    elif status == "ABNORMAL":
+        st.warning(status)
+    elif status == "NORMAL":
+        st.success(status)
     else:
-        st.success("NORMAL")
-    st.caption(f"Triggered rule: {record.get('triggered_rule', '--')}")
-with right:
-    st.markdown("### Secure Communication")
-    handshake = str(record.get("secure_link_status", record.get("handshake_status", "pending"))).lower()
-    if handshake in {"established", "verified", "success"}:
+        st.info(status)
+    st.write(status_note)
+    st.caption(f"Classification: {classification or '--'} · Severity: {severity if severity is not None else '--'}")
+with c2:
+    st.markdown("#### Secure Communication")
+    handshake = first_present(record, "secure_link_status", "handshake_status")
+    if str(handshake).strip().lower() in {"established", "verified", "success"}:
         st.success("ESTABLISHED")
-    elif handshake in {"failed", "error"}:
-        st.error("FAILED")
+        st.caption("Status supplied by the uploaded record; verify the trusted source.")
     else:
         st.warning("PENDING")
-    st.caption("ESTABLISHED is not claimed unless a verification status is supplied.")
+        st.caption("No verified secure-link handshake was supplied. This prototype cannot establish a link.")
 
-st.markdown("### RF Measurements")
+st.subheader("RF Measurements")
+rf = get_rf(record)
 cols = st.columns(4)
-for col, label, value, unit in zip(cols, ["SNR", "RSSI", "Noise Floor", "RF Trend"],
-        [rf["snr_db"], rf["rssi_dbm"], rf["noise_floor_dbm"], rf["trend"]], ["dB", "dBm", "dBm", ""]):
-    col.metric(label, val(value, unit))
+units = {"SNR": "dB", "RSSI": "dBm", "Noise Floor": "dBm", "RF Trend": ""}
+for col, label in zip(cols, rf):
+    col.metric(label, display_value(rf[label], units[label]))
 
-with st.expander("Threat Intelligence details", expanded=True):
-    st.json(record)
+st.subheader("Threat Intelligence Details")
+details = [
+    ("Observation ID", first_present(record, "observation_id", "id")),
+    ("Timestamp", record.get("timestamp")),
+    ("Triggered Rule", record.get("triggered_rule")),
+    ("Statistical Deviation", record.get("statistical_deviation")),
+]
+cols = st.columns(4)
+for col, (label, value) in zip(cols, details):
+    with col:
+        st.markdown(f"**{label}**")
+        st.write(display_value(value))
 
-st.markdown("### Adaptive Response Decision")
-if response["response_required"]:
-    st.error("HIGH-SEVERITY JAMMING — SECURE-LINK CONFIGURATION REQUIRED")
-    st.write(response["reason"])
-    if not st.session_state.get("build_done"):
-        deadline = st.session_state.get("build_deadline", time.time() + 15)
-        remaining = max(0, int(deadline - time.time() + 0.999))
-        clicked = st.button("🔴 Build the communication now", type="primary", use_container_width=True)
-        st.caption(f"Automatic start in {remaining} seconds if not started manually.")
-        if clicked or remaining <= 0:
-            st.session_state["build_done"] = True
-            st.session_state.pop("build_deadline", None)
-            st.rerun()
-        st_autorefresh(interval=1000, key="secure_link_countdown_refresh")
-    else:
-        st.success("Configuration build process started (software simulation).")
-        st.json(response)
+with st.expander("Evidence and abnormal features", expanded=True):
+    st.markdown("**Evidence**")
+    st.write(first_present(record, "evidence", default="--"))
+    st.markdown("**Abnormal features**")
+    st.write(first_present(record, "abnormal_features", default="--"))
+
+st.subheader("Adaptive Response Decision")
+decision, reason, kind = response_decision(record)
+if kind == "error":
+    st.error(decision)
+elif kind == "warning":
+    st.warning(decision)
+elif kind == "success":
+    st.success(decision)
 else:
-    st.info(response["reason"])
-    st.json(response)
+    st.info(decision)
+st.write(reason)
 
-st.download_button("Download response JSON", data=json.dumps(response, indent=2, ensure_ascii=False),
-    file_name="secure_communication_response.json", mime="application/json")
-st.warning("This app analyzes uploaded JSON only; it does not scan live RF or change real radio settings. The countdown launches a software-only configuration simulation.")
+if classification == "jamming" and str(severity).strip().lower() == "high":
+    st.button(
+        "Build the communication",
+        disabled=True,
+        help="Disabled until compatible secure-link radio hardware and protocol are integrated.",
+    )
+    st.caption("This button remains disabled: this app does not transmit or establish a secure link.")
+
+with st.expander("View all uploaded JSON records"):
+    st.json(records)
+
+st.caption(
+    "Prototype limitation: labels and RF measurements are read from uploaded JSON. "
+    "This app does not independently detect jamming or scan live RF signals."
+)
