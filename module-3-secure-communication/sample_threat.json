@@ -1,0 +1,22 @@
+{
+  "observation_id": "OBS-EXAMPLE-001",
+  "timestamp": "2026-10-23T10:00:00+05:30",
+  "classification": "jamming",
+  "severity": "high",
+  "triggered_rule": "J01",
+  "abnormal_features": [
+    "snr_drop",
+    "noise_floor_increase"
+  ],
+  "statistical_deviation": {
+    "snr": -6.8,
+    "noise_floor": 5.1
+  },
+  "evidence": [
+    "ILLUSTRATIVE ONLY — replace with a real Threat Intelligence record."
+  ],
+  "snr_db": null,
+  "rssi_dbm": null,
+  "noise_floor_dbm": null,
+  "rf_trend": null
+}
