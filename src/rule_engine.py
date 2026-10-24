@@ -54,8 +54,8 @@ class RuleBasedJammingDetector:
         }
 
 
-# Threshold defaults calibrated via scripts/calibrate_j01.py on 2026-10-01
-# using data/normal.csv (n=200) and data/jamming.csv (n=50) generated with seed=42.
+# Legacy four-feature thresholds retained only for compatibility with the original
+# RFObservation API. The real-recording pipeline uses src.real_detection instead.
 #   J01: Joint 2D grid search over snr x noise candidates [1.0..4.0] step 0.25
 #        -> snr_thresh=2.50, noise_thresh=2.75 (F1=1.0000); noise_thresh=2.75 provides
 #           a safe margin over the normal noise floor tail (max ~2.68 sigma) so that

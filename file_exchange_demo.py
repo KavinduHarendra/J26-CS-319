@@ -1,4 +1,4 @@
-"""Compatibility launcher for the unified integration demo.
+"""Compatibility launcher for the real-recording integration demo.
 
 Use ``demo.py`` for new commands. This filename remains available so existing
 notes and scripts continue to run the same application.

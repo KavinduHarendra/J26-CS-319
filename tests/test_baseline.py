@@ -7,7 +7,7 @@ Covers:
   - ValueError when calibrate() is called with fewer than 2 samples.
   - z-score and deviation computation on known inputs.
   - Feature completeness and structural correctness.
-  - End-to-end with SyntheticDataSource.
+  - End-to-end chronological split using local fixtures.
 """
 
 import pytest
@@ -20,7 +20,6 @@ from src.baseline import (
     UnsafeBaselineSampleError,
 )
 from src.schema import RFObservation
-from src.data_source import SyntheticDataSource
 
 
 # ---------------------------------------------------------------------------
@@ -286,18 +285,29 @@ class TestAddNormalSamples:
 
 
 # ---------------------------------------------------------------------------
-# 7. End-to-end with SyntheticDataSource (70/30 split sanity check)
+# 7. End-to-end with deterministic local fixtures (70/30 split sanity check)
 # ---------------------------------------------------------------------------
 
-class TestBaselineWithSyntheticDataSource:
+class TestBaselineWithLocalFixtures:
     """
-    Verify that calibrating on synthetic normal data through SyntheticDataSource
-    produces sensible baselines, and that held-out z-scores stay small.
+    Verify that calibration and held-out checks work without external generators.
     """
 
-    def test_calibrate_from_synthetic_source(self):
-        source = SyntheticDataSource("normal", seed=42)
-        all_obs = source.fetch_batch(200)
+    @staticmethod
+    def observations(count: int) -> list[RFObservation]:
+        return [
+            _make_obs(
+                -60.0 + ((index % 5) - 2) * 0.5,
+                25.0 + ((index % 7) - 3) * 0.3,
+                -90.0 + ((index % 3) - 1) * 0.4,
+                100.0 + ((index % 9) - 4) * 1.5,
+                f"fixture-{index:03d}",
+            )
+            for index in range(count)
+        ]
+
+    def test_calibrate_from_local_fixture(self):
+        all_obs = self.observations(200)
 
         split_idx = int(len(all_obs) * 0.70)
         calibration_set = all_obs[:split_idx]
@@ -323,8 +333,7 @@ class TestBaselineWithSyntheticDataSource:
 
     def test_calibration_and_evaluation_sets_are_disjoint(self):
         """Confirm the 70/30 split produces non-overlapping ID sets."""
-        source = SyntheticDataSource("normal", seed=99)
-        all_obs = source.fetch_batch(100)
+        all_obs = self.observations(100)
         split_idx = int(len(all_obs) * 0.70)
 
         calib_ids = {obs.observation_id for obs in all_obs[:split_idx]}

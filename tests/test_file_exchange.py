@@ -32,10 +32,16 @@ def valid_input(sequence: int = 1, observation_id: str = "capture-001") -> Obser
         sequence_number=sequence,
         observation_id=observation_id,
         timestamp=datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc),
-        rssi=-60.0,
-        snr=25.0,
-        noise_floor=-90.0,
-        packet_rate=100.0,
+        elapsed_s=float(sequence),
+        measurements={
+            "peak_freq_mhz": 433.958,
+            "peak_db": -103.0,
+            "noise_db": -106.0,
+            "snr_db": 3.0,
+            "band_power_dbfs": -45.1,
+            "occupied_bw_khz": 0.0,
+            "spectral_flatness": 0.851,
+        },
     )
 
 
@@ -46,7 +52,7 @@ def exchange_root(tmp_path) -> Path:
 
 @pytest.fixture
 def processor(exchange_root) -> FileProcessor:
-    return FileProcessor(exchange_root, seed=42)
+    return FileProcessor(exchange_root)
 
 
 def test_atomic_write_exposes_only_complete_destination(tmp_path, monkeypatch):
@@ -118,7 +124,7 @@ def test_invalid_json_nan_and_oversized_inputs_are_rejected_without_output(
     (paths["inbox"] / "000001_bad-json.json").write_text("{not json", encoding="utf-8")
 
     nan_payload = valid_input(sequence=2, observation_id="nan-snr").model_dump(mode="json")
-    nan_payload["snr"] = float("nan")
+    nan_payload["measurements"]["snr_db"] = float("nan")
     (paths["inbox"] / "000002_nan-snr.json").write_text(
         json.dumps(nan_payload, allow_nan=True),
         encoding="utf-8",
@@ -161,7 +167,7 @@ def test_each_valid_capture_creates_one_valid_output_per_recipient(
     processor, exchange_root
 ):
     paths = ensure_exchange_folders(exchange_root)
-    capture = valid_input(sequence=25, observation_id="radio/capture 25")
+    capture = valid_input(sequence=25, observation_id="radio_capture_25")
     input_name = exchange_filename(capture.sequence_number, capture.observation_id)
     write_json_atomic(paths["inbox"] / input_name, capture)
 

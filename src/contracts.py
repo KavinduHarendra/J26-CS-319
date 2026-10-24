@@ -30,20 +30,32 @@ SEVERITY_MAP: dict[str, SeverityContract] = {
 }
 
 
+class MeasurementsIn(BaseModel):
+    """Validated measurement block in a Module 1 capture."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    peak_freq_mhz: float = Field(ge=0.0, le=100_000.0, allow_inf_nan=False)
+    peak_db: float = Field(ge=-300.0, le=100.0, allow_inf_nan=False)
+    noise_db: float = Field(ge=-300.0, le=100.0, allow_inf_nan=False)
+    snr_db: float = Field(ge=-200.0, le=300.0, allow_inf_nan=False)
+    band_power_dbfs: float = Field(ge=-300.0, le=100.0, allow_inf_nan=False)
+    occupied_bw_khz: float = Field(ge=0.0, le=1_000_000.0, allow_inf_nan=False)
+    spectral_flatness: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+
+
 class ObservationIn(BaseModel):
-    """Validated Module 1 capture accepted by Module 2."""
+    """Validated measurement-only Module 1 capture accepted by Module 2."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
     schema_version: Literal["1.0"]
     source_module: Literal["module1_sdr_rf_threat_detection"]
-    sequence_number: int = Field(ge=0, le=999_999)
+    sequence_number: int = Field(ge=1, le=999_999)
     observation_id: str = Field(min_length=1, max_length=64)
     timestamp: datetime
-    rssi: float = Field(ge=-140.0, le=0.0, allow_inf_nan=False)
-    snr: float = Field(ge=-40.0, le=80.0, allow_inf_nan=False)
-    noise_floor: float = Field(ge=-150.0, le=-20.0, allow_inf_nan=False)
-    packet_rate: float = Field(ge=0.0, le=1_000_000.0, allow_inf_nan=False)
+    elapsed_s: float = Field(ge=0.0, allow_inf_nan=False)
+    measurements: MeasurementsIn
 
 
 class ThreatStateOut(BaseModel):

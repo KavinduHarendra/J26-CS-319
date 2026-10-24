@@ -3,7 +3,7 @@ tests/test_classifier.py — Unit tests for ThreatIntelligenceModule and classif
 
 Verifies:
   - Classification and Severity string enums.
-  - Correct classification of three synthetic observations:
+  - Correct classification of three hand-built observations:
       1. Clearly normal -> Normal (severity=None, triggered_rule=None)
       2. Clearly jamming -> Jamming (severity="High", triggered_rule contains J01)
       3. Clearly unknown-anomaly -> Unknown Anomaly (abnormal_features=["snr"], rule=None)
@@ -21,14 +21,22 @@ from src.baseline import NormalBaseline
 from src.rule_engine import build_default_ruleset
 from src.anomaly_engine import StatisticalAnomalyEngine
 from src.classifier import Classification, Severity, ThreatOutput, ThreatIntelligenceModule
-from src.synthetic_data import generate_normal
 
 
 @pytest.fixture
 def calibrated_pipeline(tmp_path):
     """Create a fully calibrated ThreatIntelligenceModule instance."""
-    # Calibrate baseline using synthetic normal data
-    calib_samples = generate_normal(n=200, seed=42)
+    calib_samples = [
+        RFObservation(
+            observation_id=f"fixture-{index:03d}",
+            timestamp=datetime(2026, 1, 1, 12, 0, index % 60, tzinfo=timezone.utc),
+            rssi=-60.0 + ((index % 5) - 2) * 0.5,
+            snr=25.0 + ((index % 7) - 3) * 0.3,
+            noise_floor=-90.0 + ((index % 3) - 1) * 0.4,
+            packet_rate=100.0 + ((index % 9) - 4) * 1.5,
+        )
+        for index in range(200)
+    ]
     baseline = NormalBaseline()
     baseline.add_normal_samples(calib_samples)
     baseline.calibrate()
@@ -67,7 +75,7 @@ class TestSeverityMapping:
         assert module._severity(0.5) == Severity.LOW
 
 
-class TestClassifySyntheticObservations:
+class TestClassifyFixtureObservations:
     """Tests the three distinct scenario conditions."""
 
     def test_classify_clearly_normal(self, calibrated_pipeline):

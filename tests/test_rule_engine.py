@@ -15,7 +15,7 @@ from src.rule_engine import Rule, RuleBasedJammingDetector, build_default_rulese
 
 
 # ---------------------------------------------------------------------------
-# Helper to build synthetic deviation dicts
+# Helper to build small deviation fixtures
 # ---------------------------------------------------------------------------
 
 def make_deviations(

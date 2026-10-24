@@ -499,8 +499,8 @@ def print_plain_language_summary(results: list[dict]):
     print("=" * 90)
 
     print("""
-1. Physical Sign of Shifts (Real vs. Synthetic Mismatch):
-   * RSSI: In synthetic data, RSSI was modeled as dropping under jamming (-15 dB).
+1. Physical Sign of Shifts (Real vs. Earlier Model Mismatch):
+   * RSSI: In the earlier model, RSSI was represented as dropping under jamming (-15 dB).
      In real SDR/Wi-Fi captures, RSSI RISES dramatically under jamming (+8.5 at -10 dBm to
      +38.4 at +10 dBm). Jamming floods the antenna with raw RF energy, causing driver RSSI
      to surge rather than drop.
@@ -526,7 +526,7 @@ def print_plain_language_summary(results: list[dict]):
    * Rule J01 currently expects SNR drop + noise floor increase. In real data, noise floor is
      constant (-102 dBm) and RSSI surges.
    * A real-data jamming detector MUST evaluate RSSI increase combined with AGC Gain reduction
-     rather than relying on synthetic noise floor increases.
+     rather than relying on assumed noise floor increases.
 """)
 
 

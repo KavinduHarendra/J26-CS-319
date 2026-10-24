@@ -17,7 +17,7 @@ caused the decision.
 ```text
 ai-threat-intel-module/
 |-- src/          Core detection, validation, baseline, exchange, and audit code
-|-- integration/  Mock Module 1, 3, and 4 file-exchange components
+|-- integration/  Mock Module 3 and 4 file-exchange receivers
 |-- tests/        Pytest test suite
 |-- scripts/      Dataset and calibration scripts
 |-- data/         Local datasets and runtime exchange records
@@ -50,11 +50,11 @@ python demo.py
 
 ## Unified integration demo
 
-`demo.py` is the central dashboard and main demonstration command. It runs a
-mock Module 1 producer, the real Module 2 pipeline, and mock Module 3 and Module
-4 receivers together. The Rich dashboard keeps overall system state, the live
-component pipeline, classifications, signal evidence, processing times, file
-queues, and mock receiver decisions in one clean view.
+`demo.py` is the central dashboard and main demonstration command. It replays the
+real Module 1 recording from 2026-10-23 in sequence order, runs the frozen v2
+Module 2 detector, and sends separate JSON results to simulated Module 3 and
+Module 4 receivers. The Rich dashboard shows classifications, signal evidence,
+processing times, scoring results, file queues, and receiver decisions.
 No server or network connection is used. JSON files are exchanged atomically
 under `data/exchange/` and moved into processed or received folders.
 
@@ -62,36 +62,46 @@ under `data/exchange/` and moved into processed or received folders.
 python demo.py
 ```
 
-Use `--plain` for line-oriented output, `--keep` to preserve existing exchange
-files, and `--count` when a fixed-length demonstration is needed. With no
-options, the mock Module 1 schedule repeats continuously until Ctrl+C. For
-example, `python demo.py --count 150 --rate 20` performs one fixed 150-capture
-run. The older `file_exchange_demo.py` command remains as a compatibility
-launcher and opens the same application.
-
-When the real Module 1 producer is available, start the dashboard without the
-mock input generator:
+Use `--speed` to set the delay in seconds between recorded captures. A speed of
+zero processes the recording as quickly as possible:
 
 ```powershell
-python demo.py --external-module1
+python demo.py --plain --no-tests --speed 0
 ```
 
-In this mode Module 2 continuously watches `data/exchange/module1_to_module2/`
-for observation JSON files until Ctrl+C.
+Use `--keep` to preserve existing exchange files. Otherwise the known exchange
+folders are cleared before replay. The older `file_exchange_demo.py` command
+remains as a compatibility launcher and opens the same application.
 
 The interactive dashboard remains open after the capture run finishes so the
 final classifications and processing statistics can be reviewed. Press Ctrl+C
 to close it. For scripts or automated runs, add `--exit-on-complete`; plain mode
 also exits automatically when processing is complete.
 
-The standalone mock components can also be run in separate terminals:
+The file processor and simulated recipients can also be run separately:
 
 ```powershell
-python integration/file_mock_module1.py --rate 5 --count 150
 python -m src.file_processor
 python integration/file_mock_receiver.py --module 3
 python integration/file_mock_receiver.py --module 4
 ```
+
+## Real recording input
+
+The recording is stored under `data/real/module1_real_signals/`. Signal JSON is
+loaded only through `src.real_data`, and the runtime `RealSignal` contains seven
+measurements without labels, capture phases, jammer names, folder names, or
+Module 1 flags. `ground_truth.csv` is joined only after classification for the
+dashboard confusion matrix, recall, and false-positive rates.
+
+The reproducible feature audit and evaluation are generated with:
+
+```powershell
+python scripts/analyze_real_data.py
+```
+
+Results are written to `reports/real_feature_audit.md`,
+`reports/real_feature_audit.csv`, and `reports/real_eval.md`.
 
 ## Input validation
 
@@ -157,6 +167,11 @@ bandit -r src
 
 ## Detection behaviour
 
-Security hardening does not change the calibrated detection behaviour. J01 and J02
-remain the known-jamming rules, the anomaly engine uses the existing z-score
-threshold, and severity uses the existing Low, Medium, and High cutoffs.
+The real-data pipeline uses two normal states: idle and legitimate OOK traffic.
+`R2-NARROWBAND` identifies the known narrowband pattern using SNR, occupied
+bandwidth, and spectral flatness. Records not matched by the rule are compared
+with the nearest normal state; an excessive robust-z distance becomes `Unknown
+Anomaly`. The decision order remains rule, anomaly, then normal. J01 and J02 are
+retired from the real-recording pipeline and remain only in the older four-field
+compatibility API. Severity cut-offs are placeholders until operational incident
+impact data is available.
