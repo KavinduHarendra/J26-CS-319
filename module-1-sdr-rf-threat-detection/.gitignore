@@ -1,0 +1,16 @@
+# recordings and datasets (too big / regenerated)
+*.wav
+*.cfile
+*.zip
+dataset_*.csv
+balanced.csv
+phases.csv
+
+# RTL-SDR runtime libraries (install locally)
+*.dll
+
+# python
+__pycache__/
+*.pyc
+.venv/
+env/
