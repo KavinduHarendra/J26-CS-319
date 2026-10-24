@@ -39,8 +39,15 @@ Thumbs.db
 .env
 .env.*
 
+# Append-only runtime security audit log
+data/audit_log.jsonl
+data/exchange/
+data/.demo_dashboard.lock
+
 # Data files (large / sensitive — track deliberately)
+*.csv
 data/*.csv
+data/external/
 data/*.pkl
 data/*.npy
 data/*.npz

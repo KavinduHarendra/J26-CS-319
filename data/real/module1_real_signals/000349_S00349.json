@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "source_module": "module1_sdr_rf_threat_detection",
+  "observation_id": "S00349",
+  "sequence_number": 349,
+  "timestamp": "2026-10-23T16:23:33.040",
+  "elapsed_s": 72.53,
+  "measurements": {
+    "peak_freq_mhz": 433.962,
+    "peak_db": -61.3,
+    "noise_db": -105.8,
+    "snr_db": 44.5,
+    "band_power_dbfs": -29.1,
+    "occupied_bw_khz": 26.0,
+    "spectral_flatness": 0.026
+  },
+  "module1_flags": {
+    "interference": 1,
+    "channel": "good",
+    "signal_present": 1,
+    "power_anomaly": 0
+  }
+}

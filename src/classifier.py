@@ -7,9 +7,11 @@ Orchestrates the complete threat intelligence pipeline:
 
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Optional, Any
 
-from src.schema import RFObservation
+from src.audit import AuditLogger, DEFAULT_AUDIT_LOG_PATH
+from src.schema import InvalidObservationError, RFObservation, validate_observation
 from src.baseline import NormalBaseline
 from src.rule_engine import RuleBasedJammingDetector
 from src.anomaly_engine import StatisticalAnomalyEngine
@@ -68,10 +70,12 @@ class ThreatIntelligenceModule:
         baseline: NormalBaseline,
         rule_detector: RuleBasedJammingDetector,
         anomaly_engine: StatisticalAnomalyEngine,
+        audit_log_path: str | Path = DEFAULT_AUDIT_LOG_PATH,
     ):
         self.baseline = baseline
         self.rule_detector = rule_detector
         self.anomaly_engine = anomaly_engine
+        self.audit_logger = AuditLogger(audit_log_path)
 
     def _severity(self, magnitude: float) -> Severity:
         """Assign severity level based on the maximum z-score deviation."""
@@ -91,6 +95,12 @@ class ThreatIntelligenceModule:
         Returns:
             Structured ThreatOutput record.
         """
+        try:
+            validate_observation(obs)
+        except InvalidObservationError as exc:
+            self.audit_logger.log_rejection(obs, exc, self.baseline.version)
+            raise
+
         deviations = self.baseline.deviations(obs)
         z_scores = deviations["z_scores"]
 
@@ -98,7 +108,7 @@ class ThreatIntelligenceModule:
         rule_result = self.rule_detector.evaluate(deviations)
         if rule_result:
             max_z = max(abs(v) for v in z_scores.values()) if z_scores else 0.0
-            return ThreatOutput(
+            output = ThreatOutput(
                 observation_id=obs.observation_id,
                 timestamp=obs.timestamp.isoformat(),
                 classification=Classification.JAMMING.value,
@@ -108,33 +118,36 @@ class ThreatIntelligenceModule:
                 statistical_deviation=z_scores,
                 evidence=rule_result["rule_descriptions"],
             )
+        else:
+            # Step 2: Statistical anomaly detection
+            anomaly_result = self.anomaly_engine.evaluate(deviations)
+            if anomaly_result:
+                max_z = max(abs(v) for v in anomaly_result["z_scores"].values())
+                output = ThreatOutput(
+                    observation_id=obs.observation_id,
+                    timestamp=obs.timestamp.isoformat(),
+                    classification=Classification.UNKNOWN_ANOMALY.value,
+                    severity=self._severity(max_z).value,
+                    triggered_rule=None,
+                    abnormal_features=anomaly_result["anomalous_features"],
+                    statistical_deviation=anomaly_result["z_scores"],
+                    evidence=[
+                        f"Significant deviation in {feature}"
+                        for feature in anomaly_result["anomalous_features"]
+                    ],
+                )
+            else:
+                # Step 3: Normal
+                output = ThreatOutput(
+                    observation_id=obs.observation_id,
+                    timestamp=obs.timestamp.isoformat(),
+                    classification=Classification.NORMAL.value,
+                    severity=None,
+                    triggered_rule=None,
+                    abnormal_features=[],
+                    statistical_deviation=z_scores,
+                    evidence=["No jamming rule triggered; within baseline deviation"],
+                )
 
-        # Step 2: Statistical anomaly detection
-        anomaly_result = self.anomaly_engine.evaluate(deviations)
-        if anomaly_result:
-            max_z = max(abs(v) for v in anomaly_result["z_scores"].values())
-            return ThreatOutput(
-                observation_id=obs.observation_id,
-                timestamp=obs.timestamp.isoformat(),
-                classification=Classification.UNKNOWN_ANOMALY.value,
-                severity=self._severity(max_z).value,
-                triggered_rule=None,
-                abnormal_features=anomaly_result["anomalous_features"],
-                statistical_deviation=anomaly_result["z_scores"],
-                evidence=[
-                    f"Significant deviation in {feature}"
-                    for feature in anomaly_result["anomalous_features"]
-                ],
-            )
-
-        # Step 3: Normal
-        return ThreatOutput(
-            observation_id=obs.observation_id,
-            timestamp=obs.timestamp.isoformat(),
-            classification=Classification.NORMAL.value,
-            severity=None,
-            triggered_rule=None,
-            abnormal_features=[],
-            statistical_deviation=z_scores,
-            evidence=["No jamming rule triggered; within baseline deviation"],
-        )
+        self.audit_logger.log_classification(obs, output, self.baseline.version)
+        return output

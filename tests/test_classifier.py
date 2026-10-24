@@ -11,10 +11,12 @@ Verifies:
   - Severity mapping boundary cutoffs (High >= 5.0, Medium >= 3.0, Low < 3.0).
 """
 
+import json
 from datetime import datetime, timezone
 import pytest
 
-from src.schema import RFObservation
+from src.audit import hash_input_record
+from src.schema import InvalidObservationError, RFObservation
 from src.baseline import NormalBaseline
 from src.rule_engine import build_default_ruleset
 from src.anomaly_engine import StatisticalAnomalyEngine
@@ -23,7 +25,7 @@ from src.synthetic_data import generate_normal
 
 
 @pytest.fixture
-def calibrated_pipeline():
+def calibrated_pipeline(tmp_path):
     """Create a fully calibrated ThreatIntelligenceModule instance."""
     # Calibrate baseline using synthetic normal data
     calib_samples = generate_normal(n=200, seed=42)
@@ -33,7 +35,12 @@ def calibrated_pipeline():
 
     rule_detector = build_default_ruleset()
     anomaly_engine = StatisticalAnomalyEngine(z_threshold=3.0)
-    module = ThreatIntelligenceModule(baseline, rule_detector, anomaly_engine)
+    module = ThreatIntelligenceModule(
+        baseline,
+        rule_detector,
+        anomaly_engine,
+        audit_log_path=tmp_path / "audit_log.jsonl",
+    )
     return module
 
 
@@ -128,3 +135,73 @@ class TestClassifySyntheticObservations:
         assert output.abnormal_features == ["snr"]
         assert output.evidence == ["Significant deviation in snr"]
         assert "snr" in output.statistical_deviation
+
+
+class TestInvalidInputCannotBeClassified:
+    """Even a mutated/forged observation must fail closed at classify()."""
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("rssi", float("nan")),
+            ("snr", float("inf")),
+            ("noise_floor", None),
+            ("rssi", "-60.0"),
+            ("packet_rate", -1.0),
+            ("observation_id", "x" * 65),
+        ],
+    )
+    def test_invalid_input_raises_without_returning_classification(
+        self, calibrated_pipeline, field, value
+    ):
+        obs = RFObservation(
+            observation_id="valid-before-mutation",
+            timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            rssi=-60.0,
+            snr=25.0,
+            noise_floor=-90.0,
+            packet_rate=100.0,
+        )
+        setattr(obs, field, value)
+        result = None
+
+        with pytest.raises(InvalidObservationError):
+            result = calibrated_pipeline.classify(obs)
+
+        assert result is None
+        records = [
+            json.loads(line)
+            for line in calibrated_pipeline.audit_logger.path.read_text(encoding="utf-8").splitlines()
+        ]
+        assert records[-1]["classification"] == "Rejected"
+        assert records[-1]["triggered_rule"] == "INVALID_INPUT"
+        assert records[-1]["input_sha256"] == hash_input_record(obs)
+
+
+class TestAuditLogging:
+    def test_successful_classification_is_appended_with_required_fields(
+        self, calibrated_pipeline
+    ):
+        obs = RFObservation(
+            observation_id="audit-normal",
+            timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            rssi=-60.0,
+            snr=25.0,
+            noise_floor=-90.0,
+            packet_rate=100.0,
+        )
+
+        output = calibrated_pipeline.classify(obs)
+        record = json.loads(
+            calibrated_pipeline.audit_logger.path.read_text(encoding="utf-8").splitlines()[-1]
+        )
+
+        assert record == {
+            "baseline_version": calibrated_pipeline.baseline.version,
+            "classification": output.classification,
+            "input_sha256": hash_input_record(obs),
+            "observation_id": obs.observation_id,
+            "severity": output.severity,
+            "timestamp": obs.timestamp.isoformat(),
+            "triggered_rule": output.triggered_rule,
+        }
