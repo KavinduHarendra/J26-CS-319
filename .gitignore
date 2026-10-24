@@ -42,6 +42,7 @@ Thumbs.db
 # Append-only runtime security audit log
 data/audit_log.jsonl
 data/exchange/
+data/json_out/
 data/.demo_dashboard.lock
 
 # Data files (large / sensitive — track deliberately)
@@ -51,3 +52,4 @@ data/external/
 data/*.pkl
 data/*.npy
 data/*.npz
+*.mat

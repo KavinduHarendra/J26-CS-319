@@ -14,15 +14,14 @@ from pathlib import Path
 import pytest
 
 from src.real_data import (
-    JsonFolderSource,
     RealSignal,
-    load_ground_truth,
-    load_module1_flags_reference,
+    SignalCollectionSource,
     load_signal,
 )
+from src.scoring_data import load_ground_truth, load_module1_flags_reference
 
 
-REAL_FOLDER = Path("data/real/module1_real_signals")
+REAL_FOLDER = Path("data/real/module1_signals_clean")
 
 
 @pytest.fixture
@@ -99,12 +98,33 @@ def test_load_signal_rejects_missing_measurement(valid_payload, tmp_path):
         load_signal(write_payload(tmp_path / "signal.json", payload))
 
 
-@pytest.mark.parametrize("field", ["phase", "label", "expected_class", "jammer_type"])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "label",
+        "phase",
+        "jamming",
+        "interference",
+        "signal_present",
+        "channel",
+        "power_anomaly",
+        "expected_class",
+        "jammer_type",
+    ],
+)
 def test_load_signal_rejects_scoring_field_leakage(valid_payload, tmp_path, field):
     payload = copy.deepcopy(valid_payload)
     payload[field] = "must-not-enter-runtime"
 
-    with pytest.raises(ValueError, match="scoring-only"):
+    with pytest.raises(ValueError, match="forbidden metadata"):
+        load_signal(write_payload(tmp_path / "signal.json", payload))
+
+
+def test_load_signal_rejects_nested_scoring_field_leakage(valid_payload, tmp_path):
+    payload = copy.deepcopy(valid_payload)
+    payload["measurements"]["label"] = "hidden"
+
+    with pytest.raises(ValueError, match="forbidden metadata"):
         load_signal(write_payload(tmp_path / "signal.json", payload))
 
 
@@ -144,50 +164,44 @@ def test_load_signal_rejects_invalid_json(tmp_path):
         load_signal(path)
 
 
-def test_json_folder_source_yields_sequence_order(valid_payload, tmp_path):
+def test_signal_collection_yields_sequence_order(valid_payload, tmp_path):
     second = copy.deepcopy(valid_payload)
     second.update(observation_id="S00002", sequence_number=2, elapsed_s=0.88)
     write_payload(tmp_path / "000002_S00002.json", second)
     write_payload(tmp_path / "000001_S00001.json", valid_payload)
 
-    signals = list(JsonFolderSource(tmp_path))
+    signals = list(SignalCollectionSource(tmp_path))
 
     assert [signal.sequence_number for signal in signals] == [1, 2]
     assert [signal.observation_id for signal in signals] == ["S00001", "S00002"]
 
 
-def test_json_folder_source_recurses_without_exposing_folder_as_data(valid_payload, tmp_path):
-    nested = tmp_path / "folder_name_is_not_a_feature"
+def test_signal_collection_recurses_without_exposing_path_as_data(valid_payload, tmp_path):
+    nested = tmp_path / "arbitrary_container_name"
     nested.mkdir()
     write_payload(nested / "000001_S00001.json", valid_payload)
 
-    signal = next(iter(JsonFolderSource(tmp_path)))
+    signal = next(iter(SignalCollectionSource(tmp_path)))
 
     assert signal.observation_id == "S00001"
-    assert not hasattr(signal, "folder")
+    assert not hasattr(signal, "source_path")
 
 
-def test_json_folder_source_checks_filename_against_content(valid_payload, tmp_path):
-    write_payload(tmp_path / "000002_S00001.json", valid_payload)
+def test_signal_collection_ignores_file_name(valid_payload, tmp_path):
+    write_payload(tmp_path / "random-name.json", valid_payload)
 
-    with pytest.raises(ValueError, match="sequence_number does not match filename"):
-        list(JsonFolderSource(tmp_path))
+    signals = list(SignalCollectionSource(tmp_path))
 
-
-def test_json_folder_source_rejects_invalid_filename(valid_payload, tmp_path):
-    write_payload(tmp_path / "signal.json", valid_payload)
-
-    with pytest.raises(ValueError, match="invalid signal filename"):
-        list(JsonFolderSource(tmp_path))
+    assert [signal.observation_id for signal in signals] == ["S00001"]
 
 
-def test_json_folder_source_requires_existing_folder(tmp_path):
+def test_signal_collection_requires_existing_root(tmp_path):
     with pytest.raises(ValueError, match="does not exist"):
-        JsonFolderSource(tmp_path / "missing")
+        SignalCollectionSource(tmp_path / "missing")
 
 
 def test_all_real_signals_validate_in_sequence_order():
-    signals = list(JsonFolderSource(REAL_FOLDER))
+    signals = list(SignalCollectionSource(REAL_FOLDER))
 
     assert len(signals) == 1513
     assert signals[0].observation_id == "S00001"

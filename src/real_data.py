@@ -1,13 +1,7 @@
-"""Validated readers for real signal records exported by Module 1.
-
-Ground-truth labels are deliberately handled by a separate scoring-only loader.
-They are never attached to :class:`RealSignal` or exposed by
-:class:`JsonFolderSource`.
-"""
+"""Validated measurement records exported by Module 1."""
 
 from __future__ import annotations
 
-import csv
 import json
 import math
 import re
@@ -44,28 +38,18 @@ _TOP_LEVEL_FIELDS = {
     "elapsed_s",
     "measurements",
 }
-_FORBIDDEN_RUNTIME_FIELDS = {"phase", "label", "expected_class", "jammer_type"}
-_GROUND_TRUTH_FIELDS = {
-    "sequence_number",
-    "observation_id",
-    "file_name",
-    "label_original",
-    "phase",
-    "expected_class",
-    "normal_kind",
-    "jammer_type",
-    "label_quality_note",
-}
-_MODULE1_REFERENCE_FIELDS = {
-    "sequence_number",
-    "observation_id",
-    "interference",
-    "channel",
-    "signal_present",
-    "power_anomaly",
-}
 _OBSERVATION_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-_SIGNAL_FILE_NAME = re.compile(r"^(\d{6})_([A-Za-z0-9_-]{1,64})\.json$")
+_FORBIDDEN_INPUT_KEYS = {
+    "label",
+    "phase",
+    "jamming",
+    "interference",
+    "signal_present",
+    "channel",
+    "power_anomaly",
+    "expected_class",
+    "jammer_type",
+}
 
 
 def _require_mapping(value: Any, context: str) -> Mapping[str, Any]:
@@ -78,6 +62,18 @@ def _require_fields(value: Mapping[str, Any], fields: set[str] | tuple[str, ...]
     missing = sorted(set(fields) - set(value))
     if missing:
         raise ValueError(f"{context} is missing required field(s): {', '.join(missing)}")
+
+
+def _reject_forbidden_keys(value: Any) -> None:
+    if isinstance(value, Mapping):
+        leaked = sorted(_FORBIDDEN_INPUT_KEYS & set(value))
+        if leaked:
+            raise ValueError("signal contains forbidden metadata key(s): " + ", ".join(leaked))
+        for child in value.values():
+            _reject_forbidden_keys(child)
+    elif isinstance(value, list):
+        for child in value:
+            _reject_forbidden_keys(child)
 
 
 def _finite_float(value: Any, field: str, bounds: tuple[float, float]) -> float:
@@ -100,12 +96,6 @@ def _positive_sequence(value: Any) -> int:
     return value
 
 
-def _binary_flag(value: Any, field: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value not in (0, 1):
-        raise ValueError(f"module1_flags.{field} must be integer 0 or 1")
-    return value
-
-
 def _timestamp(value: Any) -> datetime:
     if not isinstance(value, str) or "T" not in value:
         raise ValueError("timestamp must be an ISO 8601 date-time string")
@@ -118,11 +108,7 @@ def _timestamp(value: Any) -> datetime:
 
 @dataclass(frozen=True, slots=True)
 class RealSignal:
-    """One validated Module 1 signal containing measurements only.
-
-    Labels, capture phases, jammer names, and Module 1's own flags are kept out
-    of this runtime type so they cannot accidentally become detector features.
-    """
+    """One validated Module 1 measurement record."""
 
     observation_id: str
     sequence_number: int
@@ -160,12 +146,8 @@ def load_signal(path: str | Path) -> RealSignal:
         raise ValueError(f"invalid JSON in {source}: {exc.msg}") from exc
 
     root = _require_mapping(payload, "signal")
+    _reject_forbidden_keys(root)
     _require_fields(root, _TOP_LEVEL_FIELDS, "signal")
-    leaked = sorted(_FORBIDDEN_RUNTIME_FIELDS & set(root))
-    if leaked:
-        raise ValueError(
-            "signal contains scoring-only field(s): " + ", ".join(leaked)
-        )
     if root["schema_version"] != SCHEMA_VERSION:
         raise ValueError(f"schema_version must be {SCHEMA_VERSION!r}")
     if root["source_module"] != SOURCE_MODULE:
@@ -214,32 +196,25 @@ def load_signal(path: str | Path) -> RealSignal:
     )
 
 
-class JsonFolderSource:
-    """Yield validated JSON signals in ascending sequence-number order."""
+class SignalCollectionSource:
+    """Yield validated JSON measurements in ascending sequence-number order."""
 
-    def __init__(self, folder: str | Path) -> None:
-        self.folder = Path(folder)
-        if not self.folder.is_dir():
-            raise ValueError(f"signal folder does not exist: {self.folder}")
+    def __init__(self, root: str | Path) -> None:
+        self.root = Path(root)
+        if not self.root.is_dir():
+            raise ValueError(f"signal collection does not exist: {self.root}")
 
     def __iter__(self) -> Iterator[RealSignal]:
-        indexed_paths: list[tuple[int, str, Path]] = []
-        for path in self.folder.rglob("*.json"):
+        indexed_signals: list[tuple[int, str, RealSignal]] = []
+        for path in self.root.rglob("*.json"):
             if path.is_symlink():
                 raise ValueError(f"symbolic links are not accepted: {path.name}")
-            match = _SIGNAL_FILE_NAME.fullmatch(path.name)
-            if match is None:
-                raise ValueError(f"invalid signal filename: {path.name}")
-            indexed_paths.append((int(match.group(1)), match.group(2), path))
+            signal = load_signal(path)
+            indexed_signals.append((signal.sequence_number, signal.observation_id, signal))
 
         seen_sequences: set[int] = set()
         seen_observations: set[str] = set()
-        for file_sequence, file_observation_id, path in sorted(indexed_paths):
-            signal = load_signal(path)
-            if signal.sequence_number != file_sequence:
-                raise ValueError(f"sequence_number does not match filename: {path.name}")
-            if signal.observation_id != file_observation_id:
-                raise ValueError(f"observation_id does not match filename: {path.name}")
+        for _, _, signal in sorted(indexed_signals):
             if signal.sequence_number in seen_sequences:
                 raise ValueError(f"duplicate sequence_number: {signal.sequence_number}")
             if signal.observation_id in seen_observations:
@@ -264,86 +239,3 @@ def signal_to_record(signal: RealSignal) -> dict[str, Any]:
             feature: getattr(signal, feature) for feature in MEASUREMENT_FIELDS
         },
     }
-
-
-def load_ground_truth(path: str | Path) -> dict[str, dict[str, str]]:
-    """Load labels by observation ID for offline scoring only.
-
-    Do not pass this return value to detection, baseline, feature extraction, or
-    classification code.
-    """
-    source = Path(path)
-    result: dict[str, dict[str, str]] = {}
-    with source.open("r", encoding="utf-8-sig", newline="") as handle:
-        reader = csv.DictReader(handle)
-        if reader.fieldnames is None:
-            raise ValueError("ground truth CSV has no header")
-        missing = sorted(_GROUND_TRUTH_FIELDS - set(reader.fieldnames))
-        if missing:
-            raise ValueError(
-                "ground truth CSV is missing required column(s): " + ", ".join(missing)
-            )
-        for line_number, row in enumerate(reader, start=2):
-            if any(value is None for value in row.values()):
-                raise ValueError(f"ground truth row {line_number} has missing values")
-            observation_id = row["observation_id"].strip()
-            if not _OBSERVATION_ID.fullmatch(observation_id):
-                raise ValueError(f"invalid observation_id on ground truth row {line_number}")
-            if observation_id in result:
-                raise ValueError(f"duplicate ground truth observation_id: {observation_id}")
-            _positive_sequence(_csv_integer(row["sequence_number"], line_number))
-            result[observation_id] = dict(row)
-    return result
-
-
-def load_module1_flags_reference(path: str | Path) -> dict[str, dict[str, Any]]:
-    """Load Module 1 flags for offline agreement reporting only.
-
-    These flags are intentionally absent from :class:`RealSignal`; callers must
-    not pass this mapping into baseline fitting, rule evaluation, or anomaly
-    detection.
-    """
-    source = Path(path)
-    result: dict[str, dict[str, Any]] = {}
-    with source.open("r", encoding="utf-8-sig", newline="") as handle:
-        reader = csv.DictReader(handle)
-        if reader.fieldnames is None:
-            raise ValueError("Module 1 reference CSV has no header")
-        missing = sorted(_MODULE1_REFERENCE_FIELDS - set(reader.fieldnames))
-        if missing:
-            raise ValueError(
-                "Module 1 reference CSV is missing required column(s): "
-                + ", ".join(missing)
-            )
-        for line_number, row in enumerate(reader, start=2):
-            observation_id = row["observation_id"].strip()
-            if not _OBSERVATION_ID.fullmatch(observation_id):
-                raise ValueError(f"invalid observation_id on reference row {line_number}")
-            if observation_id in result:
-                raise ValueError(f"duplicate reference observation_id: {observation_id}")
-            sequence_number = _positive_sequence(
-                _csv_integer(row["sequence_number"], line_number)
-            )
-            result[observation_id] = {
-                "sequence_number": sequence_number,
-                "interference": _binary_flag(
-                    _csv_integer(row["interference"], line_number), "interference"
-                ),
-                "channel": row["channel"].strip(),
-                "signal_present": _binary_flag(
-                    _csv_integer(row["signal_present"], line_number), "signal_present"
-                ),
-                "power_anomaly": _binary_flag(
-                    _csv_integer(row["power_anomaly"], line_number), "power_anomaly"
-                ),
-            }
-    return result
-
-
-def _csv_integer(value: str, line_number: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"invalid sequence_number on ground truth row {line_number}"
-        ) from exc

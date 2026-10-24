@@ -1,8 +1,7 @@
 """Version 2 detection components calibrated from validated real measurements.
 
-This module deliberately accepts only :class:`src.real_data.RealSignal` values.
-Ground-truth labels, capture phases, jammer names, folder names, and Module 1
-flags are not part of the runtime feature interface.
+This module deliberately accepts only validated :class:`src.real_data.RealSignal`
+measurement values. Reference metadata is not part of the runtime interface.
 """
 
 from __future__ import annotations
@@ -27,8 +26,8 @@ AUDITED_FEATURES = (
 )
 
 # noise_db and peak_freq_mhz are intentionally excluded. In this recording they
-# move with the scripted capture phase or receiver tuning and would not be safe
-# evidence of a threat in another session.
+# move with acquisition order or receiver tuning and would not be safe evidence
+# of a threat in another session.
 DETECTION_FEATURES = (
     "peak_db",
     "snr_db",

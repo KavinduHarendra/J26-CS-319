@@ -21,11 +21,12 @@ from src.file_exchange import (
     write_json_atomic,
 )
 from src.file_processor import FileProcessor
-from src.real_data import JsonFolderSource, RealSignal, load_ground_truth, signal_to_record
+from src.real_data import RealSignal, SignalCollectionSource, signal_to_record
+from src.scoring_data import load_ground_truth
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-REAL_DATA_ROOT = PROJECT_ROOT / "data" / "real" / "module1_real_signals"
+REAL_DATA_ROOT = PROJECT_ROOT / "data" / "real" / "module1_signals_clean"
 CLASS_COLOURS = {"NORMAL": "green", "JAMMING": "bold red", "UNKNOWN_ANOMALY": "yellow"}
 
 
@@ -377,7 +378,7 @@ def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         if not args.keep:
             clear_exchange_files(DEFAULT_EXCHANGE_ROOT)
         paths = ensure_exchange_folders(DEFAULT_EXCHANGE_ROOT)
-        signals = list(JsonFolderSource(REAL_DATA_ROOT))
+        signals = list(SignalCollectionSource(REAL_DATA_ROOT))
         truth = load_ground_truth(REAL_DATA_ROOT / "ground_truth.csv")
         state = DemoState(truth)
         processor = FileProcessor(paths["root"])

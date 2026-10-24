@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from src.real_data import JsonFolderSource, RealSignal
+from src.real_data import RealSignal, SignalCollectionSource
 
 
 class RFDataSource(ABC):
@@ -20,8 +20,8 @@ class RFDataSource(ABC):
 class RecordedSignalSource(RFDataSource):
     """Sequential, finite source backed by Module 1 JSON files."""
 
-    def __init__(self, folder: str | Path) -> None:
-        self._signals = iter(JsonFolderSource(folder))
+    def __init__(self, root: str | Path) -> None:
+        self._signals = iter(SignalCollectionSource(root))
         self.exhausted = False
 
     def fetch_batch(self, n: int) -> list[RealSignal]:

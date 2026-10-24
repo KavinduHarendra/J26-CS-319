@@ -18,22 +18,19 @@ if str(ROOT) not in sys.path:
 
 from src.classifier import Classification
 from src.real_classifier import RealThreatClassifierV2, SEVERITY_CUTOFFS_PLACEHOLDER
-from src.real_data import (
-    JsonFolderSource,
-    RealSignal,
-    load_ground_truth,
-    load_module1_flags_reference,
-)
+from src.real_data import RealSignal, SignalCollectionSource
+from src.scoring_data import load_ground_truth, load_module1_flags_reference
 from src.real_detection import (
     AUDITED_FEATURES,
     BASELINE_VERSION,
     DETECTION_FEATURES,
     STD_FLOORS,
+    RealDetectorV2,
     fit_detector_v2,
 )
 
 
-DATA = ROOT / "data" / "real" / "module1_real_signals"
+DATA = ROOT / "data" / "real" / "module1_signals_clean"
 REPORTS = ROOT / "reports"
 JAMMER_TYPES = ("CARRIER", "PULSED_50_50", "PULSED_5_95", "RANDOM_BURSTS")
 KNOWN_JAMMERS = ("CARRIER", "PULSED_50_50")
@@ -287,14 +284,10 @@ def evaluation_report(
     truth: dict[str, dict[str, str]],
     flags: dict[str, dict[str, object]],
     split: dict[str, list[RealSignal]],
+    detector: RealDetectorV2,
 ) -> str:
     calibration_normal = split["calibration_idle"] + split["calibration_legitimate"]
     validation_normal = split["validation_idle"] + split["validation_legitimate"]
-    detector = fit_detector_v2(
-        split["calibration_idle"],
-        split["calibration_legitimate"],
-        split["calibration_jamming"],
-    )
     classifier = RealThreatClassifierV2(detector)
     sets = [
         score_rows(
@@ -522,8 +515,21 @@ def evaluation_report(
 
 
 def main() -> None:
-    signals = list(JsonFolderSource(DATA))
     truth = load_ground_truth(DATA / "ground_truth.csv")
+    known_signals = list(SignalCollectionSource(DATA / "known_signals"))
+    calibration_split = split_data(known_signals, truth)
+    detector = fit_detector_v2(
+        calibration_split["calibration_idle"],
+        calibration_split["calibration_legitimate"],
+        calibration_split["calibration_jamming"],
+    )
+
+    abnormal_signals = list(SignalCollectionSource(DATA / "abnormal_signals"))
+    ambiguous_signals = list(SignalCollectionSource(DATA / "ambiguous_signals"))
+    signals = sorted(
+        known_signals + abnormal_signals + ambiguous_signals,
+        key=lambda signal: signal.sequence_number,
+    )
     flags = load_module1_flags_reference(DATA / "module1_flags_reference.csv")
     if len(signals) != len(truth) or len(signals) != len(flags):
         raise RuntimeError("signals, ground truth, and flag reference must have equal counts")
@@ -538,17 +544,26 @@ def main() -> None:
         writer.writerows(audit_rows)
     (REPORTS / "real_feature_audit.md").write_text(audit_markdown, encoding="utf-8")
     (REPORTS / "real_eval.md").write_text(
-        evaluation_report(signals, truth, flags, split), encoding="utf-8"
+        evaluation_report(signals, truth, flags, split, detector), encoding="utf-8"
     )
 
-    detector = fit_detector_v2(
-        split["calibration_idle"],
-        split["calibration_legitimate"],
-        split["calibration_jamming"],
-    )
     classifier = RealThreatClassifierV2(detector)
     counts = Counter(classification_name(classifier.classify(signal).classification) for signal in signals)
     print(f"Validated signals: {len(signals)}")
+    print(
+        "Calibration source: data/real/module1_signals_clean/known_signals only "
+        f"({len(known_signals)} files, ordered by sequence number)"
+    )
+    print(
+        "Calibration rows: "
+        f"idle first half={len(calibration_split['calibration_idle'])}, "
+        f"legitimate first half={len(calibration_split['calibration_legitimate'])}, "
+        f"known jammer rows={len(calibration_split['calibration_jamming'])}"
+    )
+    print(
+        "Evaluation-only rows loaded after fitting: "
+        f"abnormal_signals={len(abnormal_signals)}, ambiguous_signals={len(ambiguous_signals)}"
+    )
     print(
         "Split: "
         f"calibration normal={len(split['calibration_idle']) + len(split['calibration_legitimate'])}, "

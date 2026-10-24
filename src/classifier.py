@@ -18,7 +18,7 @@ from src.anomaly_engine import StatisticalAnomalyEngine
 
 
 class Classification(str, Enum):
-    """Categorical classification labels."""
+    """Categorical classification values."""
     NORMAL = "Normal"
     JAMMING = "Jamming"
     UNKNOWN_ANOMALY = "Unknown Anomaly"

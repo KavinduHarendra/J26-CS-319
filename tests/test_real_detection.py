@@ -11,7 +11,8 @@ import pytest
 from scripts.analyze_real_data import split_data
 from src.classifier import Classification, ThreatOutput
 from src.real_classifier import RealThreatClassifierV2
-from src.real_data import JsonFolderSource, RealSignal, load_ground_truth
+from src.real_data import RealSignal, SignalCollectionSource
+from src.scoring_data import load_ground_truth
 from src.real_detection import (
     DETECTION_FEATURES,
     STD_FLOORS,
@@ -20,7 +21,7 @@ from src.real_detection import (
 )
 
 
-DATA = Path("data/real/module1_real_signals")
+DATA = Path("data/real/module1_signals_clean")
 FORBIDDEN = {
     "phase",
     "label",
@@ -33,7 +34,7 @@ FORBIDDEN = {
 
 @pytest.fixture(scope="module")
 def real_context():
-    signals = list(JsonFolderSource(DATA))
+    signals = list(SignalCollectionSource(DATA))
     truth = load_ground_truth(DATA / "ground_truth.csv")
     split = split_data(signals, truth)
     detector = fit_detector_v2(

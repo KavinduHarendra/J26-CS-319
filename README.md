@@ -88,7 +88,7 @@ python integration/file_mock_receiver.py --module 4
 
 ## Real recording input
 
-The recording is stored under `data/real/module1_real_signals/`. Signal JSON is
+The recording is stored under `data/real/module1_signals_clean/`. Signal JSON is
 loaded only through `src.real_data`, and the runtime `RealSignal` contains seven
 measurements without labels, capture phases, jammer names, folder names, or
 Module 1 flags. `ground_truth.csv` is joined only after classification for the

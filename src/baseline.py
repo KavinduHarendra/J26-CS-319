@@ -66,10 +66,10 @@ class NormalBaseline:
         A sample already classified as Jamming or Unknown Anomaly is refused so
         threat data cannot poison the normal baseline.
         """
-        label = getattr(classification, "value", classification)
-        if label != "Normal":
+        classification_value = getattr(classification, "value", classification)
+        if classification_value != "Normal":
             raise UnsafeBaselineSampleError(
-                f"Refusing to add '{label}' observation to the normal baseline"
+                f"Refusing to add '{classification_value}' observation to the normal baseline"
             )
         validate_observation(obs)
         for f in self.FEATURES:
