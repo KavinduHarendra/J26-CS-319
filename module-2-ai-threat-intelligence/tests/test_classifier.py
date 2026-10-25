@@ -1,207 +1,77 @@
-"""
-tests/test_classifier.py — Unit tests for ThreatIntelligenceModule and classification pipeline.
+from dataclasses import replace
+from pathlib import Path
 
-Verifies:
-  - Classification and Severity string enums.
-  - Correct classification of three synthetic observations:
-      1. Clearly normal -> Normal (severity=None, triggered_rule=None)
-      2. Clearly jamming -> Jamming (severity="High", triggered_rule contains J01)
-      3. Clearly unknown-anomaly -> Unknown Anomaly (abnormal_features=["snr"], rule=None)
-  - ThreatOutput dataclass fields and evidence text formatting.
-  - Severity mapping boundary cutoffs (High >= 5.0, Medium >= 3.0, Low < 3.0).
-"""
-
-import json
-from datetime import datetime, timezone
 import pytest
 
-from src.audit import hash_input_record
-from src.schema import InvalidObservationError, RFObservation
-from src.baseline import NormalBaseline
-from src.rule_engine import build_default_ruleset
-from src.anomaly_engine import StatisticalAnomalyEngine
-from src.classifier import Classification, Severity, ThreatOutput, ThreatIntelligenceModule
-from src.synthetic_data import generate_normal
+from src.classifier import Classification, Severity, build_classifier
+from src.real_data import Signal, load_signal
+
+
+SAMPLE = Path("data/real/module1_signals_clean/known_signals/000001_S00001.json")
+
+
+@pytest.fixture(scope="module")
+def classifier():
+    return build_classifier()
 
 
 @pytest.fixture
-def calibrated_pipeline(tmp_path):
-    """Create a fully calibrated ThreatIntelligenceModule instance."""
-    # Calibrate baseline using synthetic normal data
-    calib_samples = generate_normal(n=200, seed=42)
-    baseline = NormalBaseline()
-    baseline.add_normal_samples(calib_samples)
-    baseline.calibrate()
+def normal_signal() -> Signal:
+    return load_signal(SAMPLE)
 
-    rule_detector = build_default_ruleset()
-    anomaly_engine = StatisticalAnomalyEngine(z_threshold=3.0)
-    module = ThreatIntelligenceModule(
-        baseline,
-        rule_detector,
-        anomaly_engine,
-        audit_log_path=tmp_path / "audit_log.jsonl",
+
+def test_clear_normal_signal_is_normal(classifier, normal_signal):
+    output = classifier.classify(normal_signal)
+
+    assert output.classification == Classification.NORMAL.value
+    assert output.severity is None
+    assert output.triggered_rule is None
+
+
+def test_r1_has_priority_and_jamming_severity_uses_uncalibrated_cutoffs(
+    classifier, normal_signal
+):
+    output = classifier.classify(
+        replace(normal_signal, snr_db=50.0, occupied_bw_khz=23.0)
     )
-    return module
+
+    assert output.classification == Classification.JAMMING.value
+    assert output.severity == Severity.HIGH.value
+    assert output.triggered_rule == "R1"
+    assert output.evidence == [
+        "snr_db 50.0 >= 25.8 and 0 < occupied_bw_khz 23.0 <= 137.5"
+    ]
 
 
-class TestEnums:
-    def test_classification_values(self):
-        assert Classification.NORMAL.value == "Normal"
-        assert Classification.JAMMING.value == "Jamming"
-        assert Classification.UNKNOWN_ANOMALY.value == "Unknown Anomaly"
+def test_non_rule_deviation_is_unknown_anomaly(classifier, normal_signal):
+    output = classifier.classify(replace(normal_signal, peak_db=-20.0))
 
-    def test_severity_values(self):
-        assert Severity.LOW.value == "Low"
-        assert Severity.MEDIUM.value == "Medium"
-        assert Severity.HIGH.value == "High"
+    assert output.classification == Classification.UNKNOWN_ANOMALY.value
+    assert output.severity in {Severity.LOW.value, Severity.MEDIUM.value, Severity.HIGH.value}
+    assert output.triggered_rule is None
+    assert "peak_db" in output.abnormal_features
 
 
-class TestSeverityMapping:
-    def test_severity_cutoffs(self, calibrated_pipeline):
-        module = calibrated_pipeline
-        assert module._severity(6.0) == Severity.HIGH
-        assert module._severity(5.0) == Severity.HIGH
-        assert module._severity(4.5) == Severity.MEDIUM
-        assert module._severity(3.0) == Severity.MEDIUM
-        assert module._severity(2.9) == Severity.LOW
-        assert module._severity(0.5) == Severity.LOW
+def test_output_contract_fields_are_present(classifier, normal_signal):
+    output = classifier.classify(normal_signal)
+
+    assert output.schema_version == "1.0"
+    assert output.source_module == "module2_ai_threat_intelligence"
+    assert output.sequence_number == normal_signal.sequence_number
+    assert output.baseline_version == "real-raw-v1"
+    assert output.processing_ms >= 0.0
+    assert output.statistical_deviation
 
 
-class TestClassifySyntheticObservations:
-    """Tests the three distinct scenario conditions."""
-
-    def test_classify_clearly_normal(self, calibrated_pipeline):
-        module = calibrated_pipeline
-        normal_obs = RFObservation(
-            observation_id="test-normal-01",
-            timestamp=datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-            rssi=-60.0,
-            snr=25.0,
-            noise_floor=-90.0,
-            packet_rate=100.0,
-        )
-
-        output: ThreatOutput = module.classify(normal_obs)
-
-        assert output.observation_id == "test-normal-01"
-        assert output.classification == Classification.NORMAL.value
-        assert output.severity is None
-        assert output.triggered_rule is None
-        assert output.abnormal_features == []
-        assert output.evidence == ["No jamming rule triggered; within baseline deviation"]
-        assert isinstance(output.statistical_deviation, dict)
-
-    def test_classify_clearly_jamming(self, calibrated_pipeline):
-        module = calibrated_pipeline
-        # Sharp SNR drop (8 dB vs 25 dB) AND severe noise floor rise (-68 dBm vs -90 dBm)
-        jamming_obs = RFObservation(
-            observation_id="test-jam-01",
-            timestamp=datetime(2026, 1, 1, 12, 0, 1, tzinfo=timezone.utc),
-            rssi=-76.0,
-            snr=6.0,
-            noise_floor=-68.0,
-            packet_rate=35.0,
-        )
-
-        output: ThreatOutput = module.classify(jamming_obs)
-
-        assert output.observation_id == "test-jam-01"
-        assert output.classification == Classification.JAMMING.value
-        assert output.severity == Severity.HIGH.value
-        assert output.triggered_rule is not None
-        assert "J01" in output.triggered_rule
-        assert len(output.evidence) >= 1
-        assert any("SNR drop" in e for e in output.evidence)
-
-    def test_classify_clearly_unknown_anomaly(self, calibrated_pipeline):
-        module = calibrated_pipeline
-        # Significant SNR drop (10 dB vs 25 dB, z ~ -7.5) but noise floor (-90 dBm)
-        # and packet rate (100) remain near normal. J01 and J02 must NOT trigger.
-        anomaly_obs = RFObservation(
-            observation_id="test-unk-01",
-            timestamp=datetime(2026, 1, 1, 12, 0, 2, tzinfo=timezone.utc),
-            rssi=-60.0,
-            snr=10.0,
-            noise_floor=-90.0,
-            packet_rate=100.0,
-        )
-
-        output: ThreatOutput = module.classify(anomaly_obs)
-
-        assert output.observation_id == "test-unk-01"
-        assert output.classification == Classification.UNKNOWN_ANOMALY.value
-        assert output.severity == Severity.HIGH.value
-        assert output.triggered_rule is None
-        assert output.abnormal_features == ["snr"]
-        assert output.evidence == ["Significant deviation in snr"]
-        assert "snr" in output.statistical_deviation
+def test_same_signal_has_identical_detection_output(classifier, normal_signal):
+    assert classifier.classify(normal_signal) == classifier.classify(normal_signal)
 
 
-class TestInvalidInputCannotBeClassified:
-    """Even a mutated/forged observation must fail closed at classify()."""
-
-    @pytest.mark.parametrize(
-        ("field", "value"),
-        [
-            ("rssi", float("nan")),
-            ("snr", float("inf")),
-            ("noise_floor", None),
-            ("rssi", "-60.0"),
-            ("packet_rate", -1.0),
-            ("observation_id", "x" * 65),
-        ],
-    )
-    def test_invalid_input_raises_without_returning_classification(
-        self, calibrated_pipeline, field, value
-    ):
-        obs = RFObservation(
-            observation_id="valid-before-mutation",
-            timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            rssi=-60.0,
-            snr=25.0,
-            noise_floor=-90.0,
-            packet_rate=100.0,
-        )
-        setattr(obs, field, value)
-        result = None
-
-        with pytest.raises(InvalidObservationError):
-            result = calibrated_pipeline.classify(obs)
-
-        assert result is None
-        records = [
-            json.loads(line)
-            for line in calibrated_pipeline.audit_logger.path.read_text(encoding="utf-8").splitlines()
-        ]
-        assert records[-1]["classification"] == "Rejected"
-        assert records[-1]["triggered_rule"] == "INVALID_INPUT"
-        assert records[-1]["input_sha256"] == hash_input_record(obs)
+def test_invalid_input_is_rejected_and_never_returns_normal(classifier):
+    with pytest.raises(TypeError, match="validated Signal"):
+        classifier.classify({"snr_db": float("nan")})
 
 
-class TestAuditLogging:
-    def test_successful_classification_is_appended_with_required_fields(
-        self, calibrated_pipeline
-    ):
-        obs = RFObservation(
-            observation_id="audit-normal",
-            timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            rssi=-60.0,
-            snr=25.0,
-            noise_floor=-90.0,
-            packet_rate=100.0,
-        )
-
-        output = calibrated_pipeline.classify(obs)
-        record = json.loads(
-            calibrated_pipeline.audit_logger.path.read_text(encoding="utf-8").splitlines()[-1]
-        )
-
-        assert record == {
-            "baseline_version": calibrated_pipeline.baseline.version,
-            "classification": output.classification,
-            "input_sha256": hash_input_record(obs),
-            "observation_id": obs.observation_id,
-            "severity": output.severity,
-            "timestamp": obs.timestamp.isoformat(),
-            "triggered_rule": output.triggered_rule,
-        }
+def test_signal_constructor_rejects_nan(normal_signal):
+    with pytest.raises(ValueError, match="finite"):
+        replace(normal_signal, snr_db=float("nan"))

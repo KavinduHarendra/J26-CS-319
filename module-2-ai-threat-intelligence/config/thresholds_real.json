@@ -1,0 +1,102 @@
+{
+  "baseline_version": "real-raw-v1",
+  "features": [
+    "peak_db",
+    "snr_db",
+    "band_power_dbfs",
+    "occupied_bw_khz",
+    "spectral_flatness"
+  ],
+  "normal_states": {
+    "idle": {
+      "anomaly_limit": 3.0,
+      "mean": {
+        "band_power_dbfs": -45.1,
+        "occupied_bw_khz": 0.0,
+        "peak_db": -103.00629921259842,
+        "snr_db": 3.0094488188976376,
+        "spectral_flatness": 0.8516236220472441
+      },
+      "name": "idle",
+      "provenance": {
+        "date": "2026-10-25",
+        "script": "scripts/calibrate_real.py",
+        "source": "data/real/module1_signals_clean/known_signals",
+        "split": "first chronological half of idle, legit_ook, CARRIER and PULSED_50_50"
+      },
+      "spread": {
+        "band_power_dbfs": 0.5,
+        "occupied_bw_khz": 5.0,
+        "peak_db": 0.5,
+        "snr_db": 0.5,
+        "spectral_flatness": 0.01
+      }
+    },
+    "legit_ook": {
+      "anomaly_limit": 4.979938406466192,
+      "mean": {
+        "band_power_dbfs": -19.866666666666667,
+        "occupied_bw_khz": 347.4166666666667,
+        "peak_db": -56.333333333333336,
+        "snr_db": 48.958333333333336,
+        "spectral_flatness": 0.008749999999999999
+      },
+      "name": "legit_ook",
+      "provenance": {
+        "date": "2026-10-25",
+        "script": "scripts/calibrate_real.py",
+        "source": "data/real/module1_signals_clean/known_signals",
+        "split": "first chronological half of idle, legit_ook, CARRIER and PULSED_50_50"
+      },
+      "spread": {
+        "band_power_dbfs": 0.5,
+        "occupied_bw_khz": 32.48450485316893,
+        "peak_db": 0.6478597241858932,
+        "snr_db": 0.6842980994339305,
+        "spectral_flatness": 0.01
+      }
+    }
+  },
+  "provenance": {
+    "date": "2026-10-25",
+    "script": "scripts/calibrate_real.py",
+    "source": "data/real/module1_signals_clean/known_signals",
+    "split": "first chronological half of idle, legit_ook, CARRIER and PULSED_50_50"
+  },
+  "schema_version": "1.0",
+  "split_counts": {
+    "CARRIER": {
+      "calibration": 24,
+      "validation": 24
+    },
+    "PULSED_50_50": {
+      "calibration": 24,
+      "validation": 24
+    },
+    "idle": {
+      "calibration": 635,
+      "validation": 636
+    },
+    "legit_ook": {
+      "calibration": 24,
+      "validation": 25
+    }
+  },
+  "spread_floors": {
+    "band_power_dbfs": 0.5,
+    "occupied_bw_khz": 5.0,
+    "peak_db": 0.5,
+    "snr_db": 0.5,
+    "spectral_flatness": 0.01
+  },
+  "thresholds": {
+    "T_BW": 137.5,
+    "T_SNR": 25.8,
+    "provenance": {
+      "date": "2026-10-25",
+      "script": "scripts/calibrate_real.py",
+      "source": "data/real/module1_signals_clean/known_signals",
+      "split": "first chronological half of idle, legit_ook, CARRIER and PULSED_50_50"
+    }
+  }
+}
