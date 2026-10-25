@@ -118,7 +118,6 @@ def read_uploaded_files(uploaded_files) -> tuple[list[dict], list[str]]:
 def validate_records(records: list[dict]) -> tuple[list[dict], list[dict]]:
     valid: list[dict] = []
     rejected: list[dict] = []
-    for original in records:
     for index, original in enumerate(records, start=1):
         record = dict(original)
         classification = canonical_classification(record.get("classification"))
