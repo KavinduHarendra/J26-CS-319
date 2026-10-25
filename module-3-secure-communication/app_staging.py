@@ -118,6 +118,7 @@ def read_uploaded_files(uploaded_files) -> tuple[list[dict], list[str]]:
 def validate_records(records: list[dict]) -> tuple[list[dict], list[dict]]:
     valid: list[dict] = []
     rejected: list[dict] = []
+    for original in records:
     for index, original in enumerate(records, start=1):
         record = dict(original)
         classification = canonical_classification(record.get("classification"))
@@ -243,7 +244,6 @@ def build_minute_summary(records: list[dict], normal_minutes_required: int) -> p
     while minute <= last_minute:
         window_records = grouped.get(minute, [])
         if not window_records:
-            # A data gap is not a normal minute and cannot release secure state.
             consecutive_normal = 0
             rows.append({
                 "Minute window": f"{minute:%Y-%m-%d %H:%M}",
@@ -281,12 +281,14 @@ def build_minute_summary(records: list[dict], normal_minutes_required: int) -> p
                     active_state = "NORMAL_MONITORING"
                     reason += (
                         f" {consecutive_normal} consecutive observed NORMAL minute(s) reached "
+                        "the configured release threshold; normal communication may be restored."
                         f"the configured release threshold; normal communication may be restored."
                     )
                 else:
                     decision = "KEEP SECURE — RECHECK NEXT MINUTE"
                     reason += (
                         f" Secure recommendation is retained until {normal_minutes_required} "
+                        "consecutive observed NORMAL minute(s) are reached."
                         f"consecutive observed NORMAL minute(s) are reached."
                     )
             else:
