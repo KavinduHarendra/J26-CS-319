@@ -9,7 +9,6 @@ st.set_page_config(
     page_icon="🛡️",
     layout="wide",
 )
-st.set_page_config(page_title="Secure UAV Communication", page_icon="🛡️", layout="wide")
 st.title("Secure UAV Communication")
 st.caption("Jamming-aware response prototype · Upload → Scan → Generate proposed configuration")
 
