@@ -1,669 +1,1091 @@
-"""Unified one-window demonstration for the file-based module integration."""
+"""Advanced live replay dashboard for the single Module 2 pipeline."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import math
 import os
-import shutil
-import threading
+import statistics
 import time
-from collections import deque
+from collections import Counter, deque
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Mapping
 
-from integration.file_mock_module1 import run_mock_module1
-from integration.file_mock_receiver import MockFileReceiver
-from src.contracts import ObservationIn, ThreatStateOut
-from src.file_exchange import DEFAULT_EXCHANGE_ROOT, ensure_exchange_folders, exchange_paths
-from src.file_processor import FileProcessor
+from src.baseline import BASELINE_FEATURES
+from src.classifier import (
+    DEFAULT_CONFIG_PATH,
+    Classification,
+    DecisionTrace,
+    ThreatClassifier,
+    ThreatOutput,
+    build_classifier,
+)
+from src.contracts import to_contract
+from src.file_exchange import exchange_filename
+from src.input_watcher import DEFAULT_INPUT_ROOT, SignalInbox
+from src.output_writer import CaptureOutputWriter, DEFAULT_OUTPUT_ROOT
+from src.real_data import MEASUREMENT_FIELDS, Signal, signal_to_record
+from src.scoring_data import load_ground_truth
 
 
-CLASS_COLOURS = {
-    "NORMAL": "green",
-    "JAMMING": "bold red",
-    "UNKNOWN_ANOMALY": "yellow",
+ROOT = Path(__file__).resolve().parents[1]
+REFERENCE_ROOT = ROOT / "data" / "real" / "module1_signals_clean"
+HEADER = "DATA: LIVE Module 1 JSON inbox. Modules 3 and 4: simulated."
+INPUT_BADGE = (
+    "ANALYSIS INPUT: 7 raw measurements only. Ground truth is used for scoring only."
+)
+RECORDING_SECONDS = 317.8
+CLASSES = (
+    Classification.NORMAL.value,
+    Classification.JAMMING.value,
+    Classification.UNKNOWN_ANOMALY.value,
+)
+CLASS_COLORS = {
+    Classification.NORMAL.value: "green",
+    Classification.JAMMING.value: "red",
+    Classification.UNKNOWN_ANOMALY.value: "yellow",
+    "REJECTED": "magenta",
+    "WAITING": "cyan",
 }
 
 
-class DemoInstanceLock:
-    """Prevent multiple dashboards from consuming the same exchange folders."""
-
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self._handle: Any = None
-
-    def acquire(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._handle = self.path.open("a+b")
-        if self.path.stat().st_size == 0:
-            self._handle.write(b"0")
-            self._handle.flush()
-        self._handle.seek(0)
-        try:
-            if os.name == "nt":
-                import msvcrt
-
-                msvcrt.locking(self._handle.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(self._handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except (OSError, BlockingIOError) as exc:
-            self._handle.close()
-            self._handle = None
-            raise RuntimeError(
-                "another dashboard is already running; close it with Ctrl+C first"
-            ) from exc
-
-    def release(self) -> None:
-        if self._handle is None:
-            return
-        try:
-            self._handle.seek(0)
-            if os.name == "nt":
-                import msvcrt
-
-                msvcrt.locking(self._handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
-        finally:
-            self._handle.close()
-            self._handle = None
+@dataclass(frozen=True, slots=True)
+class ProcessedCapture:
+    signal: Signal
+    output: ThreatOutput
+    trace: DecisionTrace
+    end_to_end_ms: float
+    file_name: str
 
 
-class DemoState:
-    """Thread-safe dashboard state populated by the four module workers."""
+@dataclass(frozen=True, slots=True)
+class ScoredCapture:
+    processed: ProcessedCapture
+    reference: Mapping[str, str]
+    matches_expected: bool
+    label_lag: bool
 
-    def __init__(self) -> None:
-        self.lock = threading.Lock()
-        self.inputs: dict[int, dict[str, Any]] = {}
-        self.latest_input: dict[str, Any] | None = None
-        self.latest_output: dict[str, Any] | None = None
-        self.scenarios: dict[int, str] = {}
-        self.captures: deque[dict[str, Any]] = deque(maxlen=12)
-        self.decisions: dict[int, str] = {}
-        self.errors: list[str] = []
-        self.sent_count = 0
 
-    def input_written(self, _path: Path, payload: ObservationIn, scenario: str) -> None:
-        dumped = payload.model_dump(mode="json")
-        with self.lock:
-            self.latest_input = dumped
-            self.inputs[payload.sequence_number] = dumped
-            self.scenarios[payload.sequence_number] = scenario
-            self.sent_count += 1
+@dataclass(frozen=True, slots=True)
+class ReplayRow:
+    sequence_number: int
+    elapsed_s: float
+    classification: str
+    rule: str
+    severity: str
+    snr_db: float
+    occupied_bw_khz: float
+    spectral_flatness: float
+    processing_ms: float
+    expected: str
+    comparison: str
 
-    def output_received(self, module: int, payload: ThreatStateOut, decision: str) -> None:
-        with self.lock:
-            self.decisions[module] = decision
-            if module != 3:
-                return
-            dumped = payload.model_dump(mode="json")
-            source = self.inputs.get(payload.sequence_number, {})
-            self.latest_output = dumped
-            self.captures.append(
-                {
-                    "sequence": payload.sequence_number,
-                    "observation_id": payload.observation_id,
-                    "scenario": self.scenarios.get(payload.sequence_number, "unknown"),
-                    "classification": payload.classification,
-                    "severity": payload.severity,
-                    "rule": payload.triggered_rule,
-                    "processing_ms": payload.processing_ms,
-                    "rssi": source.get("rssi"),
-                    "snr": source.get("snr"),
-                    "noise_floor": source.get("noise_floor"),
-                    "packet_rate": source.get("packet_rate"),
-                    "evidence": payload.evidence,
-                    "deviation": payload.statistical_deviation,
-                }
+
+class DashboardState:
+    def __init__(self, total: int, speed: float, *, ascii_mode: bool = False) -> None:
+        self.total = total
+        self.speed = speed
+        self.ascii_mode = ascii_mode
+        self.paused = False
+        self.full_json = False
+        self.quit_requested = False
+        self.received = 0
+        self.classified = 0
+        self.rejected = 0
+        self.duplicates = 0
+        self.class_counts: Counter[str] = Counter()
+        self.path_counts: Counter[str] = Counter()
+        self.recent: deque[ReplayRow] = deque(maxlen=14)
+        self.decisions: deque[str] = deque(maxlen=120)
+        self.snr_history: deque[float] = deque(maxlen=60)
+        self.bw_history: deque[float] = deque(maxlen=60)
+        self.scored: list[ScoredCapture] = []
+        self.latest: ScoredCapture | None = None
+        self.latest_trace: DecisionTrace | None = None
+        self.rejection_reason: str | None = None
+        self.started = time.perf_counter()
+
+    def add(self, item: ScoredCapture) -> None:
+        result = item.processed
+        signal = result.signal
+        output = result.output
+        self.received += 1
+        self.classified += 1
+        self.class_counts[output.classification] += 1
+        self.path_counts[result.trace.path_taken] += 1
+        self.scored.append(item)
+        self.latest = item
+        self.latest_trace = result.trace
+        self.rejection_reason = None
+        self.decisions.append(output.classification)
+        self.snr_history.append(signal.snr_db)
+        self.bw_history.append(signal.occupied_bw_khz)
+        if item.reference["expected_class"] == "UNSCORED":
+            comparison = "-"
+        else:
+            comparison = "label lag" if item.label_lag else ("OK" if item.matches_expected else "NO")
+        self.recent.append(
+            ReplayRow(
+                sequence_number=signal.sequence_number,
+                elapsed_s=signal.elapsed_s,
+                classification=output.classification,
+                rule=output.triggered_rule or "-",
+                severity=output.severity or "-",
+                snr_db=signal.snr_db,
+                occupied_bw_khz=signal.occupied_bw_khz,
+                spectral_flatness=signal.spectral_flatness,
+                processing_ms=output.processing_ms,
+                expected=item.reference["expected_class"],
+                comparison=comparison,
             )
+        )
 
-    def add_error(self, message: str) -> None:
-        with self.lock:
-            self.errors.append(message)
+    def add_rejected(self, reason: str) -> None:
+        self.received += 1
+        self.rejected += 1
+        self.latest = None
+        self.rejection_reason = reason
+        self.latest_trace = DecisionTrace.rejected(reason)
 
-    def snapshot(self) -> dict[str, Any]:
-        with self.lock:
-            return {
-                "latest_input": self.latest_input,
-                "latest_output": self.latest_output,
-                "captures": list(self.captures),
-                "decisions": dict(self.decisions),
-                "errors": list(self.errors),
-                "sent_count": self.sent_count,
-            }
+    def add_duplicates(self, count: int) -> None:
+        self.duplicates += count
 
 
-def folder_counts(root: str | Path = DEFAULT_EXCHANGE_ROOT) -> dict[str, int]:
-    """Return the live queue/archive counts used by the dashboard."""
-    paths = exchange_paths(root)
+def process(
+    signal: Signal,
+    classifier: ThreatClassifier,
+    writer: CaptureOutputWriter,
+) -> ProcessedCapture:
+    """Classify and write one capture without accepting any scoring reference."""
+    started = time.perf_counter()
+    output, trace = classifier.classify_with_trace(signal)
+    writer.write(signal, output)
+    end_to_end_ms = (time.perf_counter() - started) * 1000.0
+    return ProcessedCapture(
+        signal=signal,
+        output=output,
+        trace=trace,
+        end_to_end_ms=end_to_end_ms,
+        file_name=exchange_filename(signal.sequence_number, signal.observation_id, threat=True),
+    )
+
+
+def score(result: ProcessedCapture, truth: Mapping[str, Mapping[str, str]]) -> ScoredCapture:
+    """Join scoring metadata only after processing has completed."""
+    reference = truth.get(result.signal.observation_id)
+    if reference is None:
+        reference = {
+            "folder": "",
+            "expected_class": "UNSCORED",
+            "normal_kind": "",
+            "jammer_type": "",
+            "label_quality_note": "",
+        }
+    note = reference["label_quality_note"]
+    return ScoredCapture(
+        processed=result,
+        reference=reference,
+        matches_expected=result.output.classification == reference["expected_class"],
+        label_lag=bool(note),
+    )
+
+
+def _p95(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    return ordered[max(0, math.ceil(0.95 * len(ordered)) - 1)]
+
+
+def _rate(numerator: int, denominator: int) -> str:
+    return f"{100.0 * numerator / denominator:.2f}%" if denominator else "n/a"
+
+
+def calculate_summary(rows: list[ScoredCapture]) -> dict[str, Any]:
+    known = [item for item in rows if item.reference["folder"] == "known_signals"]
+    matrix = {
+        expected: {
+            predicted: sum(
+                item.reference["expected_class"] == expected
+                and item.processed.output.classification == predicted
+                for item in known
+            )
+            for predicted in CLASSES
+        }
+        for expected in (Classification.NORMAL.value, Classification.JAMMING.value)
+    }
+
+    def normal_fpr(kind: str) -> tuple[int, int]:
+        selected = [
+            item
+            for item in known
+            if item.reference["expected_class"] == Classification.NORMAL.value
+            and item.reference["normal_kind"] == kind
+        ]
+        return (
+            sum(
+                item.processed.output.classification != Classification.NORMAL.value
+                for item in selected
+            ),
+            len(selected),
+        )
+
+    jammer_recall: dict[str, tuple[int, int]] = {}
+    jammer_types = sorted(
+        {
+            item.reference["jammer_type"]
+            for item in rows
+            if item.reference["jammer_type"]
+            and item.reference["expected_class"] == Classification.JAMMING.value
+        }
+    )
+    for jammer in jammer_types:
+        selected = [
+            item
+            for item in rows
+            if item.reference["jammer_type"] == jammer
+            and item.reference["expected_class"] == Classification.JAMMING.value
+        ]
+        jammer_recall[jammer] = (
+            sum(
+                item.processed.output.classification == Classification.JAMMING.value
+                for item in selected
+            ),
+            len(selected),
+        )
+
+    abnormal = [item for item in rows if item.reference["folder"] == "abnormal_signals"]
+    abnormal_counts = Counter(item.processed.output.classification for item in abnormal)
+    transition = [
+        item
+        for item in rows
+        if item.reference["label_quality_note"].startswith("signal present")
+    ]
+    idle_inside = [
+        item
+        for item in rows
+        if item.reference["label_quality_note"].startswith("labelled none")
+    ]
+    classify_times = [item.processed.output.processing_ms for item in rows]
+    end_times = [item.processed.end_to_end_ms for item in rows]
+    elapsed = sum(end_times) / 1000.0
+    mismatches = [
+        (
+            item.processed.signal.observation_id,
+            item.reference["expected_class"],
+            item.processed.output.classification,
+        )
+        for item in rows
+        if item.reference["expected_class"] != "UNSCORED"
+        and not item.label_lag
+        and not item.matches_expected
+    ]
     return {
-        "Inbox": len(list(paths["inbox"].glob("*.json"))),
-        "Processed": len(list(paths["processed"].glob("*.json"))),
-        "Rejected": len(list(paths["rejected"].glob("*.json"))),
-        "M3 queue": len(list(paths["module3"].glob("*.json"))),
-        "M3 received": len(list(paths["module3_received"].glob("*.json"))),
-        "M4 queue": len(list(paths["module4"].glob("*.json"))),
-        "M4 received": len(list(paths["module4_received"].glob("*.json"))),
+        "matrix": matrix,
+        "idle_fpr": normal_fpr("idle"),
+        "legit_fpr": normal_fpr("legit_ook"),
+        "jammer_recall": jammer_recall,
+        "abnormal_counts": dict(abnormal_counts),
+        "abnormal_total": len(abnormal),
+        "abnormal_detected": sum(
+            item.processed.output.classification != Classification.NORMAL.value
+            for item in abnormal
+        ),
+        "abnormal_r1": sum(item.processed.trace.path_taken == "R1" for item in abnormal),
+        "abnormal_anomaly": sum(
+            item.processed.trace.path_taken == "ANOMALY" for item in abnormal
+        ),
+        "transition": [
+            (item.processed.signal.observation_id, item.processed.output.classification)
+            for item in transition
+        ],
+        "idle_inside": [
+            (item.processed.signal.observation_id, item.processed.output.classification)
+            for item in idle_inside
+        ],
+        "classify_mean_ms": statistics.fmean(classify_times) if classify_times else 0.0,
+        "classify_p95_ms": _p95(classify_times),
+        "classify_max_ms": max(classify_times, default=0.0),
+        "end_mean_ms": statistics.fmean(end_times) if end_times else 0.0,
+        "end_p95_ms": _p95(end_times),
+        "end_max_ms": max(end_times, default=0.0),
+        "throughput": len(rows) / elapsed if elapsed else 0.0,
+        "path_counts": dict(Counter(item.processed.trace.path_taken for item in rows)),
+        "mismatches": mismatches,
     }
 
 
-def _metric(value: Any, unit: str = "") -> str:
-    return "-" if value is None else f"{float(value):.2f}{unit}"
+def print_summary(summary: dict[str, Any]) -> None:
+    print("\n=== FINAL SUMMARY ===")
+    print("Known-signals confusion matrix (rows expected, columns output)")
+    print("expected,NORMAL,JAMMING,UNKNOWN_ANOMALY")
+    for expected, values in summary["matrix"].items():
+        print(expected + "," + ",".join(str(values[name]) for name in CLASSES))
+    idle_fp, idle_total = summary["idle_fpr"]
+    legit_fp, legit_total = summary["legit_fpr"]
+    print(f"idle_false_positive_rate={idle_fp}/{idle_total} ({_rate(idle_fp, idle_total)})")
+    print(
+        f"legit_ook_false_positive_rate={legit_fp}/{legit_total} "
+        f"({_rate(legit_fp, legit_total)})"
+    )
+    for jammer, (hits, total) in summary["jammer_recall"].items():
+        print(f"recall_{jammer}={hits}/{total} ({_rate(hits, total)})")
+    print(
+        f"abnormal_not_normal={summary['abnormal_detected']}/{summary['abnormal_total']} "
+        f"({_rate(summary['abnormal_detected'], summary['abnormal_total'])}) "
+        f"classes={summary['abnormal_counts']} r1={summary['abnormal_r1']} "
+        f"anomaly={summary['abnormal_anomaly']}"
+    )
+    print(f"transition_rows_4={summary['transition']}")
+    print(f"idle_looking_inside_jammer_rows_7={summary['idle_inside']}")
+    print(f"path_counts={summary['path_counts']}")
+    print(f"non_label_lag_mismatches={summary['mismatches']}")
+    print(
+        f"classify_latency_ms mean={summary['classify_mean_ms']:.4f} "
+        f"p95={summary['classify_p95_ms']:.4f} max={summary['classify_max_ms']:.4f} "
+        f"target_p95_lt_50={summary['classify_p95_ms'] < 50.0}"
+    )
+    print(
+        f"end_to_end_latency_ms mean={summary['end_mean_ms']:.4f} "
+        f"p95={summary['end_p95_ms']:.4f} max={summary['end_max_ms']:.4f} "
+        f"throughput_per_second={summary['throughput']:.2f}"
+    )
 
 
-def _latest_panel(snapshot: dict[str, Any], *, compact: bool = False):
-    from rich.panel import Panel
-    from rich.text import Text
-
-    rows = snapshot["captures"]
-    if not rows:
-        return Panel(
-            "[dim]Waiting for the first validated classification...[/]",
-            title="Latest detection",
-            border_style="blue",
-        )
-
-    row = rows[-1]
-    classification = row["classification"]
-    colour = CLASS_COLOURS.get(classification, "white")
-    evidence = row["evidence"] or []
-    evidence_text = "\n".join(f"  - {item}" for item in evidence[:3]) or "  - No threat evidence"
-    deviations = row["deviation"] or {}
-    deviation_text = "  ".join(
-        f"{name}={float(value):+.2f}z" for name, value in deviations.items()
-    ) or "none"
-    if compact:
-        first_evidence = evidence[0] if evidence else "No threat evidence"
-        content = Text.from_markup(
-            f"[{colour}]{classification}[/]  severity={row['severity'] or '-'}\n"
-            f"#{row['sequence']:06d}  {row['observation_id']}\n"
-            f"[bold]Rule[/] {row['rule'] or '-'}\n"
-            f"RSSI {_metric(row['rssi'])}  SNR {_metric(row['snr'])}\n"
-            f"Noise {_metric(row['noise_floor'])}  Pkt {_metric(row['packet_rate'])}\n"
-            f"[bold]Why[/] {first_evidence}"
-        )
-    else:
-        content = Text.from_markup(
-            f"[{colour}]{classification}[/]  severity={row['severity'] or '-'}\n"
-            f"[bold]Capture[/]  #{row['sequence']:06d}  {row['observation_id']}\n"
-            f"[bold]Rule[/]     {row['rule'] or '-'}\n"
-            f"[bold]Signal[/]   RSSI {_metric(row['rssi'], ' dBm')}   "
-            f"SNR {_metric(row['snr'], ' dB')}\n"
-            f"           Noise {_metric(row['noise_floor'], ' dBm')}   "
-            f"Packets {_metric(row['packet_rate'], '/s')}\n"
-            f"[bold]Deviation[/] {deviation_text}\n"
-            f"[bold]Evidence[/]\n{evidence_text}"
-        )
-    return Panel(content, title="Latest detection", border_style=colour)
+def _status(value: bool | None, ascii_mode: bool) -> str:
+    if value is None:
+        return "--"
+    if value:
+        return "OK" if ascii_mode else "✓"
+    return "NO" if ascii_mode else "✗"
 
 
-def build_dashboard(
-    state: DemoState,
-    processor: FileProcessor,
-    started: float,
+def _bar(value: float, limit: float, ascii_mode: bool, width: int = 12) -> str:
+    ratio = value / limit if limit else 0.0
+    filled = min(width, max(0, round(ratio * width)))
+    marker = "#" if ascii_mode else "█"
+    return marker * filled + "-" * (width - filled)
+
+
+def _spark(values: list[float], ascii_mode: bool, width: int = 60) -> str:
+    if not values:
+        return "-"
+    values = values[-width:]
+    low, high = min(values), max(values)
+    if math.isclose(low, high):
+        return ("#" if ascii_mode else "▄") * len(values)
+    chars = " .:-=+*#" if ascii_mode else "▁▂▃▄▅▆▇█"
+    return "".join(
+        chars[min(len(chars) - 1, int((value - low) / (high - low) * (len(chars) - 1)))]
+        for value in values
+    )
+
+
+def _progress(value: float, total: float, ascii_mode: bool, width: int = 32) -> str:
+    ratio = min(1.0, max(0.0, value / total if total else 0.0))
+    filled = round(ratio * width)
+    marker = "#" if ascii_mode else "█"
+    return marker * filled + "-" * (width - filled)
+
+
+def _json_renderable(payload: Mapping[str, Any]):
+    from rich.syntax import Syntax
+
+    return Syntax(
+        json.dumps(payload, indent=2, ensure_ascii=False, default=str),
+        "json",
+        word_wrap=True,
+    )
+
+
+def _summary_for_state(state: DashboardState) -> dict[str, Any]:
+    return calculate_summary(state.scored)
+
+
+def render_dashboard(
+    state: DashboardState,
+    writer_stats: Mapping[str, Any],
+    classifier: ThreatClassifier,
     *,
-    compact: bool = False,
-    completed: bool = False,
-    module1_mock: bool = True,
+    layout_mode: str = "auto",
+    terminal_width: int = 120,
+    terminal_height: int = 40,
 ):
-    """Build a clean single-screen view of the complete integration flow."""
-    from rich import box
-    from rich.align import Align
+    """Build a Rich renderable; safe for live, tests, and offscreen snapshots."""
+    from rich.columns import Columns
+    from rich.console import Group
     from rich.layout import Layout
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
 
-    snapshot = state.snapshot()
-    stats = processor.stats_snapshot()
-    counts = folder_counts(processor.paths["root"])
-    class_counts = stats["class_counts"]
-    classified = sum(class_counts.values())
-
-    layout = Layout()
-    layout.split_column(
-        Layout(name="header", size=3),
-        Layout(name="pipeline", size=4 if compact else 5),
-        Layout(name="body", ratio=3),
-        Layout(name="status", size=7 if compact else 9),
-        Layout(name="footer", size=1 if compact else 3),
-    )
-
-    system_state = "[bold green]COMPLETE[/]" if completed else "[bold cyan]RUNNING[/]"
-    if compact:
-        heading = "[bold]UAV Cyber Defence - Central Dashboard[/]"
-    else:
-        simulated_modules = "Modules 1, 3 and 4" if module1_mock else "Modules 3 and 4"
-        heading = (
-            "[bold]UAV Cyber Defence - Central Threat Intelligence Dashboard[/]   "
-            f"[yellow]{simulated_modules} simulated[/]"
+    resolved_layout = layout_mode
+    if resolved_layout == "auto":
+        resolved_layout = (
+            "full" if terminal_width >= 160 and terminal_height >= 45 else "compact"
         )
-    title = Text.from_markup(
-        f"{heading}   {system_state}   [dim]{time.monotonic() - started:.1f}s[/]"
+    full_json = state.full_json and resolved_layout == "full"
+    latest = state.latest
+    waiting = latest is None and state.rejection_reason is None
+    trace = state.latest_trace or DecisionTrace.rejected("waiting for the first capture")
+    signal = latest.processed.signal if latest else None
+    output = latest.processed.output if latest else None
+    elapsed_s = signal.elapsed_s if signal else 0.0
+    progress_text = Text()
+    progress_text.append(HEADER + "\n", style="bold cyan")
+    progress_text.append(INPUT_BADGE + "\n", style="bold")
+    progress_text.append(
+        f"Input [{_progress(elapsed_s, RECORDING_SECONDS, state.ascii_mode)}] "
+        f"elapsed={elapsed_s:.1f}s  captures={state.classified}  "
+        f"delay={state.speed:.3f}s  paused={state.paused}"
     )
-    layout["header"].update(
-        Panel(Align.center(title), border_style="green" if completed else "cyan")
+    header = Panel(progress_text, title="Module 2 Threat Intelligence", border_style="cyan")
+
+    current_class = (
+        state.latest.processed.output.classification
+        if state.latest
+        else ("WAITING" if waiting else "REJECTED")
+    )
+    current_severity = (
+        state.latest.processed.output.severity or "NONE" if state.latest else "NONE"
+    )
+    current_rule = (
+        state.latest.processed.output.triggered_rule or "NONE"
+        if state.latest
+        else "NONE"
+    )
+    status_text = Text(justify="center")
+    status_text.append(f"\n{current_class}\n", style=f"bold {CLASS_COLORS[current_class]}")
+    status_text.append(
+        f"Severity: {current_severity}    Triggered rule: {current_rule}",
+        style="bold",
+    )
+    status_panel = Panel(
+        status_text,
+        title="CURRENT THREAT STATUS",
+        border_style=CLASS_COLORS[current_class],
+        padding=(0, 2),
     )
 
-    pipeline = Table.grid(expand=True)
-    pipeline.add_column(ratio=2, justify="center")
-    pipeline.add_column(width=3, justify="center")
-    pipeline.add_column(ratio=2, justify="center")
-    pipeline.add_column(width=3, justify="center")
-    pipeline.add_column(ratio=2, justify="center")
-    if compact:
-        module1_label = "MOCK MODULE 1" if module1_mock else "EXTERNAL MODULE 1"
-        module2_label = "THREAT INTELLIGENCE"
-        receivers_label = "MOCK MODULES 3 + 4"
-    else:
-        module1_label = (
-            "MODULE 1 - RF INPUT (MOCK)"
-            if module1_mock
-            else "MODULE 1 - RF INPUT (EXTERNAL)"
+    now = time.monotonic()
+    flow = Table.grid(expand=True)
+    flow.add_row("Module 1 (live inbox)", "->", "Module 2", "->", "Module 3 + Module 4")
+    flow.add_row(
+        f"received {state.received}",
+        "",
+        f"classified {state.classified} | rejected {state.rejected}",
+        "",
+        f"duplicates {state.duplicates + writer_stats.get('duplicates', 0)} | missing {len(writer_stats.get('missing_sequence_numbers', []))}",
+    )
+    for recipient in ("module3", "module4"):
+        last_name = writer_stats.get("last_file_name", {}).get(recipient) or "-"
+        last_time = writer_stats.get("last_write_time", {}).get(recipient)
+        age = f"{now - last_time:.1f}s" if last_time is not None else "-"
+        flow.add_row(
+            recipient,
+            "",
+            f"files {writer_stats.get('files_written', {}).get(recipient, 0)}",
+            "",
+            f"last {last_name} | age {age}",
         )
-        module2_label = "MODULE 2 - THREAT INTELLIGENCE"
-        receivers_label = "MODULES 3 + 4 (MOCK)"
-    input_count = snapshot["sent_count"] if module1_mock else stats["received"]
-    pipeline.add_row(
-        f"[yellow bold]{module1_label}[/]\n{input_count} captures",
-        "[cyan]=>[/]",
-        f"[green bold]{module2_label}[/]\n{classified} classified",
-        "[cyan]=>[/]",
-        f"[yellow bold]{receivers_label}[/]\n{counts['M3 received']} / {counts['M4 received']} received",
-    )
-    pipeline_title = "Run complete" if completed else "Live pipeline"
-    pipeline_border = "green" if completed else "blue"
-    layout["pipeline"].update(
-        Panel(pipeline, title=pipeline_title, border_style=pipeline_border)
-    )
+    flow_panel = Panel(flow, title="Data flow")
 
-    layout["body"].split_row(Layout(name="recent", ratio=3), Layout(name="latest", ratio=2))
-    recent = Table(box=box.SIMPLE, expand=True, header_style="bold cyan", padding=(0, 1))
-    recent.add_column("Seq", justify="right", width=6)
-    if compact:
-        recent.add_column("Input", width=7)
-        recent.add_column("Class", width=8)
-    else:
-        recent.add_column("Input", max_width=12)
-        recent.add_column("Classification", min_width=17)
-        recent.add_column("Severity", width=8)
-        recent.add_column("Rule", max_width=18)
-    recent.add_column("ms", justify="right", width=6 if compact else 7)
-    visible_rows = snapshot["captures"][-5:] if compact else snapshot["captures"]
-    for row in visible_rows:
-        colour = CLASS_COLOURS.get(row["classification"], "white")
-        display_class = (
-            "UNKNOWN" if compact and row["classification"] == "UNKNOWN_ANOMALY"
-            else row["classification"]
+    trace_table = Table(expand=True, show_lines=False)
+    trace_table.add_column("Result", width=6)
+    trace_table.add_column("Step", ratio=1, overflow="fold")
+    trace_table.add_column("Expression / actual / threshold", ratio=3, overflow="fold")
+    for step in trace.steps:
+        style = "green" if step.passed else ("red" if step.passed is False else "dim")
+        details = (
+            f"{step.expression}; actual={dict(step.actual_values)}; "
+            f"thresholds={dict(step.thresholds)}"
         )
-        values = [
-            f"{row['sequence']:06d}",
-            row["scenario"].replace("_", " "),
-            f"[{colour}]{display_class}[/]",
-        ]
-        if not compact:
-            values.extend([row["severity"] or "-", row["rule"] or "-"])
-        values.append(f"{row['processing_ms']:.3f}")
-        recent.add_row(*values)
-    layout["recent"].update(Panel(recent, title="Recent captures", border_style="cyan"))
-    layout["latest"].update(_latest_panel(snapshot, compact=compact))
+        trace_table.add_row(_status(step.passed, state.ascii_mode), step.name, details, style=style)
+    displayed_path = "WAITING" if waiting else trace.path_taken
+    trace_table.add_row("PATH", displayed_path, f"nearest={trace.nearest_state or '-'}; skipped={list(trace.skipped_rules) or '-'}")
+    trace_table.add_row("WHY", trace.plain_english, "")
+    trace_panel = Panel(trace_table, title="Decision trace", border_style=CLASS_COLORS.get(trace.path_taken, "cyan"))
 
-    layout["status"].split_row(
-        Layout(name="kpis", ratio=2),
-        Layout(name="folders", ratio=2),
-        Layout(name="receivers", ratio=3 if compact else 2),
-    )
-    kpis = Table.grid(expand=True)
-    kpis.add_column()
-    kpis.add_column(justify="right")
-    if not compact:
-        kpis.add_row("Received", str(stats["received"]))
-    kpis.add_row("[green]Normal[/]", str(class_counts.get("Normal", 0)))
-    kpis.add_row("[red]Jamming[/]", str(class_counts.get("Jamming", 0)))
-    kpis.add_row("[yellow]Unknown[/]", str(class_counts.get("Unknown Anomaly", 0)))
-    if compact:
-        kpis.add_row("Mean", f"{stats['mean_processing_ms']:.3f} ms")
-        kpis.add_row("P95", f"{stats['p95_processing_ms']:.3f} ms")
-    else:
-        kpis.add_row("Mean / P95", f"{stats['mean_processing_ms']:.3f} / {stats['p95_processing_ms']:.3f} ms")
-    kpi_title = "Module 2 Results" if compact else "Threat Intelligence"
-    layout["kpis"].update(Panel(kpis, title=kpi_title, border_style="green"))
-
-    folders = Table.grid(expand=True)
-    folders.add_column()
-    folders.add_column(justify="right")
-    if compact:
-        folders.add_row("Inbox/done", f"{counts['Inbox']}/{counts['Processed']}")
-        folders.add_row("Rejected", str(counts["Rejected"]))
-        folders.add_row("M3 q/recv", f"{counts['M3 queue']}/{counts['M3 received']}")
-        folders.add_row("M4 q/recv", f"{counts['M4 queue']}/{counts['M4 received']}")
-    else:
-        for name, count in counts.items():
-            folders.add_row(name, str(count))
-    layout["folders"].update(
-        Panel(folders, title="JSON Exchange", border_style="blue")
+    distance_table = Table(expand=True)
+    distance_table.add_column("Feature", overflow="fold")
+    for state_name in ("idle", "legit_ook"):
+        marker = " *nearest*" if trace.nearest_state == state_name else ""
+        distance_table.add_column(f"{state_name}{marker}", overflow="fold")
+    for feature in BASELINE_FEATURES:
+        cells = []
+        for state_name in ("idle", "legit_ook"):
+            distance = trace.per_state_distances.get(state_name, {}).get(feature)
+            limit = trace.state_limits.get(state_name)
+            cells.append(
+                "-"
+                if distance is None or limit is None
+                else f"{distance:.2f}/{limit:.2f} {_bar(distance, limit, state.ascii_mode)}"
+            )
+        distance_table.add_row(feature, *cells)
+    distance_panel = Panel(
+        distance_table,
+        title="Distance from each normal state (units of spread)",
     )
 
-    decisions = snapshot["decisions"]
-    if compact:
-        receiver_text = (
-            f"[bold]Module 3[/] {decisions.get(3, 'Waiting...')}\n"
-            f"[bold]Module 4[/] {decisions.get(4, 'Waiting...')}\n"
-            f"Rejected: {stats['rejected']}   Duplicates: {stats['duplicates']}"
+    if signal is None:
+        display_status = "WAITING" if waiting else "REJECTED"
+        incoming_payload: Mapping[str, Any] = {"status": display_status, "reason": state.rejection_reason or "waiting for a JSON capture"}
+        outgoing_payload: Mapping[str, Any] = {"classification": display_status, "evidence": [trace.plain_english]}
+    elif full_json:
+        incoming_payload = signal_to_record(signal)
+        outgoing_payload = to_contract(output, recipient="module3").model_dump(mode="json")
+    else:
+        incoming_payload = {
+            "observation_id": signal.observation_id,
+            "sequence_number": signal.sequence_number,
+            "timestamp": signal.timestamp.isoformat(timespec="milliseconds"),
+            "measurements": {name: getattr(signal, name) for name in MEASUREMENT_FIELDS},
+        }
+        outgoing_payload = {
+            "classification": output.classification,
+            "severity": output.severity,
+            "triggered_rule": output.triggered_rule,
+            "abnormal_features": output.abnormal_features,
+            "statistical_deviation": {
+                "description": "distance from the nearest normal state (units of spread)",
+                "values": output.statistical_deviation,
+            },
+            "evidence": output.evidence,
+            "processing_ms": output.processing_ms,
+        }
+    output_class = output.classification if output else ("WAITING" if waiting else "REJECTED")
+    json_panels = Columns(
+        [
+            Panel(_json_renderable(incoming_payload), title="Incoming JSON", expand=True),
+            Panel(
+                _json_renderable(outgoing_payload),
+                title="Outgoing JSON",
+                border_style=CLASS_COLORS[output_class],
+                expand=True,
+            ),
+        ],
+        equal=True,
+        expand=True,
+    )
+
+    rules = Table.grid(expand=True)
+    rules.add_row(
+        "R1 Narrowband strong signal",
+        f"snr_db >= {classifier.rules.t_snr:.1f}; 0 < occupied_bw_khz <= {classifier.rules.t_bw:.1f}; fired {state.path_counts['R1']}",
+    )
+    rules.add_row(
+        "Anomaly engine",
+        f"idle limit {classifier.baseline.idle.anomaly_limit:.2f}; legit limit {classifier.baseline.legitimate.anomaly_limit:.2f}; flagged {state.path_counts['ANOMALY']}",
+    )
+    rules.add_row("Normal", f"count {state.path_counts['NORMAL']}")
+    rules.add_row("Severity", "cut-offs are uncalibrated placeholders")
+    rules_panel = Panel(rules, title="Rule book")
+
+    feed = Table(expand=True)
+    columns = ("Seq", "Elapsed", "Class", "Rule", "Sev", "SNR", "BW", "Flat", "ms", "Expected", "Match")
+    for name in columns:
+        feed.add_column(name, overflow="fold", no_wrap=True)
+    for row in state.recent:
+        comparison = row.comparison
+        if comparison == "OK" and not state.ascii_mode:
+            comparison = "✓"
+        elif comparison == "NO" and not state.ascii_mode:
+            comparison = "✗"
+        feed.add_row(
+            str(row.sequence_number), f"{row.elapsed_s:.1f}",
+            f"[{CLASS_COLORS[row.classification]}]{row.classification}[/]", row.rule,
+            row.severity, f"{row.snr_db:.1f}", f"{row.occupied_bw_khz:.1f}",
+            f"{row.spectral_flatness:.3f}", f"{row.processing_ms:.3f}",
+            row.expected, comparison,
         )
-    else:
-        receiver_text = (
-            f"[bold]Module 3[/]\n{decisions.get(3, 'Waiting...')}\n\n"
-            f"[bold]Module 4[/]\n{decisions.get(4, 'Waiting...')}\n\n"
-            f"Rejected: {stats['rejected']}  Duplicates: {stats['duplicates']}"
-        )
-    if snapshot["errors"]:
-        receiver_text += f"\n[red]Error: {snapshot['errors'][-1]}[/]"
-    layout["receivers"].update(
-        Panel(receiver_text, title="Response Components (MOCK)", border_style="yellow")
+    feed_panel = Panel(feed, title="Live feed — last 14 signals")
+
+    summary = _summary_for_state(state)
+    scoreboard = Table.grid(expand=True)
+    scoreboard.add_row("Class counts", str(dict(state.class_counts)))
+    scoreboard.add_row("Confusion", str(summary["matrix"]))
+    scoreboard.add_row("Idle FPR", f"{summary['idle_fpr'][0]}/{summary['idle_fpr'][1]} ({_rate(*summary['idle_fpr'])})")
+    scoreboard.add_row("Legit OOK FPR", f"{summary['legit_fpr'][0]}/{summary['legit_fpr'][1]} ({_rate(*summary['legit_fpr'])})")
+    scoreboard.add_row("Jammer recall", str({key: f"{value[0]}/{value[1]}" for key, value in summary["jammer_recall"].items()}))
+    scoreboard.add_row(
+        "Abnormal not NORMAL",
+        f"{summary['abnormal_detected']}/{summary['abnormal_total']} | R1 {summary['abnormal_r1']} | anomaly {summary['abnormal_anomaly']}",
+    )
+    scoreboard_panel = Panel(scoreboard, title="Scoreboard")
+
+    latency = Table.grid(expand=True)
+    latency.add_row("classify mean / p95 / max", f"{summary['classify_mean_ms']:.3f} / {summary['classify_p95_ms']:.3f} / {summary['classify_max_ms']:.3f} ms")
+    latency.add_row("end-to-end mean / p95 / max", f"{summary['end_mean_ms']:.3f} / {summary['end_p95_ms']:.3f} / {summary['end_max_ms']:.3f} ms")
+    latency.add_row("throughput", f"{summary['throughput']:.1f}/s")
+    latency.add_row("NFR01 classify p95 < 50 ms", "PASS" if summary["classify_p95_ms"] < 50.0 else "FAIL")
+    latency_panel = Panel(latency, title="Latency")
+
+    timeline = Text()
+    for decision in state.decisions:
+        timeline.append("#" if state.ascii_mode else "■", style=CLASS_COLORS[decision])
+    timeline.append("\nSNR  " + _spark(list(state.snr_history), state.ascii_mode))
+    timeline.append(f"  T_SNR={classifier.rules.t_snr:.1f}")
+    timeline.append("\nBW   " + _spark(list(state.bw_history), state.ascii_mode))
+    timeline.append(f"  T_BW={classifier.rules.t_bw:.1f}")
+    timeline_panel = Panel(timeline, title="Timeline — 120 decisions; 60-signal sparklines")
+
+    config_hash = hashlib.sha256(DEFAULT_CONFIG_PATH.read_bytes()).hexdigest()[:12]
+    keys = "keys: space pause/resume | +/- speed | j JSON | s snapshot | q quit"
+    if os.name != "nt":
+        keys += " (interactive keys available on Windows)"
+    footer = Panel(
+        f"{keys}\nbaseline={classifier.baseline.version} | thresholds={DEFAULT_CONFIG_PATH.name} | sha256={config_hash}",
+        title="Controls",
     )
 
-    if completed:
-        footer_text = "[bold green]RUN COMPLETE[/]    Review the dashboard    [bold]Ctrl+C[/] to close"
-    elif compact:
-        footer_text = "[dim]JSON exchange: data/exchange[/]    [bold]Ctrl+C[/] stop cleanly"
-    else:
-        footer_text = (
-            f"[dim]Exchange: {processor.paths['root']}[/]    "
-            "[bold]Ctrl+C[/] stop cleanly"
+    if resolved_layout == "compact":
+        compact_flow = Table.grid(expand=True)
+        compact_flow.add_column(ratio=1, overflow="fold")
+        compact_flow.add_column(ratio=2, overflow="fold")
+        compact_flow.add_row(
+            "Received / classified / rejected",
+            f"{state.received} / {state.classified} / {state.rejected}",
         )
-    footer = Text.from_markup(footer_text)
-    if compact:
-        layout["footer"].update(Align.center(footer))
-    else:
-        layout["footer"].update(Panel(Align.center(footer), border_style="cyan"))
-    return layout
+        compact_flow.add_row(
+            "Duplicates / missing",
+            f"{state.duplicates + writer_stats.get('duplicates', 0)} / {len(writer_stats.get('missing_sequence_numbers', []))}",
+        )
+        for recipient in ("module3", "module4"):
+            compact_flow.add_row(
+                recipient,
+                f"{writer_stats.get('files_written', {}).get(recipient, 0)} | "
+                f"{writer_stats.get('last_file_name', {}).get(recipient) or '-'}",
+            )
 
+        compact_trace = Table.grid(expand=True)
+        compact_trace.add_column(ratio=1, overflow="fold")
+        compact_trace.add_column(ratio=2, overflow="fold")
+        strong_step = next((step for step in trace.steps if step.name == "Strong signal"), None)
+        narrow_step = next((step for step in trace.steps if step.name == "Narrow bandwidth"), None)
+        anomaly_step = next((step for step in trace.steps if step.name == "Nearest-state anomaly"), None)
+        compact_trace.add_row(
+            "Strong / narrow",
+            f"{_status(strong_step.passed if strong_step else None, state.ascii_mode)} / "
+            f"{_status(narrow_step.passed if narrow_step else None, state.ascii_mode)}",
+        )
+        compact_trace.add_row(
+            "Path / nearest",
+            f"{displayed_path} / {trace.nearest_state or '-'}",
+        )
+        compact_trace.add_row(
+            "Anomaly / skipped",
+            f"{_status(anomaly_step.passed if anomaly_step else None, state.ascii_mode)} / "
+            f"{','.join(trace.skipped_rules) or '-'}",
+        )
+        compact_trace.add_row("Why", trace.plain_english)
 
-def print_plain_snapshot(processor: FileProcessor, root: Path) -> None:
-    stats = processor.stats_snapshot()
-    counts = stats["class_counts"]
-    print(
-        "[Module 2] "
-        f"received={stats['received']} normal={counts.get('Normal', 0)} "
-        f"jamming={counts.get('Jamming', 0)} "
-        f"unknown={counts.get('Unknown Anomaly', 0)} "
-        f"rejected={stats['rejected']} duplicates={stats['duplicates']} "
-        f"mean_ms={stats['mean_processing_ms']:.3f} "
-        f"p95_ms={stats['p95_processing_ms']:.3f}"
+        compact_rule = Table.grid(expand=True)
+        compact_rule.add_column(ratio=1, overflow="fold")
+        compact_rule.add_column(ratio=3, overflow="fold")
+        compact_rule.add_row(
+            "R1",
+            f"SNR >= {classifier.rules.t_snr:.1f}; 0 < BW <= {classifier.rules.t_bw:.1f}; "
+            f"fired {state.path_counts['R1']}",
+        )
+        compact_rule.add_row(
+            "Anomaly",
+            f"limits {classifier.baseline.idle.anomaly_limit:.2f} / "
+            f"{classifier.baseline.legitimate.anomaly_limit:.2f}; "
+            f"flagged {state.path_counts['ANOMALY']}",
+        )
+        compact_rule.add_row("Normal", str(state.path_counts["NORMAL"]))
+        compact_rule.add_row("Severity", "uncalibrated placeholders")
+
+        compact_distances = Table(expand=True, box=None, padding=(0, 1))
+        compact_distances.add_column("Feature", overflow="fold")
+        compact_distances.add_column("Idle", justify="right", overflow="fold")
+        compact_distances.add_column("Legit", justify="right", overflow="fold")
+        for feature in BASELINE_FEATURES:
+            idle_value = trace.per_state_distances.get("idle", {}).get(feature)
+            legit_value = trace.per_state_distances.get("legit_ook", {}).get(feature)
+            compact_distances.add_row(
+                feature,
+                "-" if idle_value is None else f"{idle_value:.2f}/{trace.state_limits['idle']:.2f}",
+                "-" if legit_value is None else f"{legit_value:.2f}/{trace.state_limits['legit_ook']:.2f}",
+            )
+
+        compact_io = Table.grid(expand=True)
+        compact_io.add_column(ratio=1, overflow="fold")
+        compact_io.add_column(ratio=4, overflow="fold")
+        if signal is None or output is None:
+            compact_io.add_row("Input", state.rejection_reason or "waiting for a JSON capture")
+            compact_io.add_row("Output", "WAITING" if waiting else "REJECTED")
+        else:
+            compact_io.add_row(
+                "Input",
+                f"{signal.observation_id} | seq {signal.sequence_number} | {signal.timestamp.time()}",
+            )
+            compact_io.add_row(
+                "Output",
+                f"{output.classification} | severity {output.severity or '-'} | "
+                f"rule {output.triggered_rule or '-'}",
+            )
+            compact_io.add_row(
+                "Raw values",
+                f"peak {signal.peak_db:.1f} | noise {signal.noise_db:.1f} | "
+                f"SNR {signal.snr_db:.1f} | power {signal.band_power_dbfs:.1f}",
+            )
+            compact_io.add_row(
+                "Spectrum",
+                f"freq {signal.peak_freq_mhz:.3f} | BW {signal.occupied_bw_khz:.1f} | "
+                f"flat {signal.spectral_flatness:.3f}",
+            )
+            compact_io.add_row("Evidence", "; ".join(output.evidence))
+
+        compact_score = Table.grid(expand=True)
+        compact_score.add_column(ratio=2, overflow="fold")
+        compact_score.add_column(ratio=3, overflow="fold")
+        compact_score.add_row("Classes", str(dict(state.class_counts)))
+        compact_score.add_row(
+            "NFR01 / throughput",
+            f"{'PASS' if summary['classify_p95_ms'] < 50.0 else 'FAIL'} / "
+            f"{summary['throughput']:.1f}/s",
+        )
+        compact_score.add_row(
+            "FPR idle / legit",
+            f"{_rate(*summary['idle_fpr'])} / {_rate(*summary['legit_fpr'])}",
+        )
+        compact_score.add_row(
+            "Recall",
+            str({key: _rate(*value) for key, value in summary["jammer_recall"].items()}),
+        )
+        compact_score.add_row(
+            "Latency mean / p95 / max",
+            f"{summary['classify_mean_ms']:.2f} / {summary['classify_p95_ms']:.2f} / "
+            f"{summary['classify_max_ms']:.2f} ms",
+        )
+
+        compact_feed = Table(expand=True, padding=(0, 1))
+        for name in ("Seq", "Class", "Rule", "SNR", "BW", "Expected", "Check"):
+            compact_feed.add_column(name, overflow="fold")
+        visible_rows = 3 if terminal_height < 38 else 5
+        for row in list(state.recent)[-visible_rows:]:
+            compact_feed.add_row(
+                str(row.sequence_number), row.classification, row.rule,
+                f"{row.snr_db:.1f}", f"{row.occupied_bw_khz:.1f}",
+                row.expected, row.comparison,
+            )
+
+        compact_timeline = Text()
+        for decision in state.decisions:
+            compact_timeline.append(
+                "#" if state.ascii_mode else "■", style=CLASS_COLORS[decision]
+            )
+        compact_timeline.append(
+            f"  SNR {_spark(list(state.snr_history), state.ascii_mode, 24)} "
+            f"({classifier.rules.t_snr:.1f})  BW "
+            f"{_spark(list(state.bw_history), state.ascii_mode, 24)} "
+            f"({classifier.rules.t_bw:.1f})"
+        )
+        compact_footer_text = Text()
+        compact_footer_text.append_text(compact_timeline)
+        compact_footer_text.append(
+            f"\n{keys} | baseline={classifier.baseline.version} | "
+            f"{DEFAULT_CONFIG_PATH.name} sha256={config_hash}"
+        )
+        compact_footer = Panel(
+            compact_footer_text,
+            title="Timeline / controls",
+            padding=(0, 1),
+        )
+
+        compact_layout = Layout(name="root")
+        feed_height = 5 if terminal_height < 38 else 8
+        compact_layout.split_column(
+            Layout(header, name="header", size=5),
+            Layout(status_panel, name="status", size=5),
+            Layout(name="body", ratio=1),
+            Layout(
+                Panel(compact_feed, title="Live feed — latest signals", padding=(0, 1)),
+                name="feed",
+                size=feed_height,
+            ),
+            Layout(compact_footer, name="footer", size=4),
+        )
+        compact_layout["body"].split_row(
+            Layout(name="left", ratio=1),
+            Layout(name="center", ratio=1),
+            Layout(name="right", ratio=1),
+        )
+        compact_layout["left"].split_column(
+            Layout(Panel(compact_flow, title="Data flow", padding=(0, 1))),
+            Layout(
+                Panel(compact_distances, title="Distances: spread / limit", padding=(0, 1))
+            ),
+        )
+        compact_layout["center"].split_column(
+            Layout(Panel(compact_trace, title="Decision trace", padding=(0, 1))),
+            Layout(Panel(compact_io, title="Current input / output", padding=(0, 1))),
+        )
+        compact_layout["right"].split_column(
+            Layout(Panel(compact_rule, title="Rule book", padding=(0, 1))),
+            Layout(
+                Panel(compact_score, title="Scoreboard / latency", padding=(0, 1))
+            ),
+        )
+        return compact_layout
+    return Group(
+        header,
+        status_panel,
+        Columns([flow_panel, rules_panel], equal=True, expand=True),
+        Columns([trace_panel, distance_panel], equal=True, expand=True),
+        json_panels,
+        feed_panel,
+        Columns([scoreboard_panel, latency_panel], equal=True, expand=True),
+        timeline_panel,
+        footer,
     )
-    print("[Folders] " + ", ".join(f"{name}={count}" for name, count in folder_counts(root).items()))
 
 
-def print_exchange_summary(root: Path) -> None:
-    print(f"\nExchange summary: {root}")
-    for name, count in folder_counts(root).items():
-        print(f"  {name:<12} {count:>5}")
+def save_snapshot(
+    state: DashboardState,
+    writer_stats: Mapping[str, Any],
+    classifier: ThreatClassifier,
+    destination: Path,
+    layout_mode: str,
+) -> tuple[Path, Path]:
+    from rich.console import Console
+
+    destination.mkdir(parents=True, exist_ok=True)
+    sequence = state.latest.processed.signal.sequence_number if state.latest else 0
+    stem = destination / f"dashboard_{sequence:06d}"
+    console = Console(
+        record=True,
+        width=180,
+        height=50,
+        force_terminal=True,
+        color_system="truecolor",
+    )
+    console.print(
+        render_dashboard(
+            state,
+            writer_stats,
+            classifier,
+            layout_mode=layout_mode,
+            terminal_width=180,
+            terminal_height=50,
+        )
+    )
+    svg_path = Path(str(stem) + ".svg")
+    text_path = Path(str(stem) + ".txt")
+    console.save_svg(str(svg_path), title="Module 2 Threat Intelligence")
+    text_path.write_text(console.export_text(clear=False), encoding="utf-8")
+    return svg_path, text_path
+
+
+def _handle_keys(
+    state: DashboardState,
+    writer: CaptureOutputWriter,
+    classifier: ThreatClassifier,
+    snapshot_dir: Path,
+    layout_mode: str,
+    *,
+    enabled: bool,
+) -> None:
+    if not enabled or os.name != "nt":
+        return
+    import msvcrt
+
+    while msvcrt.kbhit():
+        key = msvcrt.getwch().lower()
+        if key == " ":
+            state.paused = not state.paused
+        elif key == "+":
+            state.speed = max(0.0, state.speed / 2.0)
+        elif key == "-":
+            state.speed = 0.05 if state.speed == 0.0 else min(10.0, state.speed * 2.0)
+        elif key == "j":
+            state.full_json = not state.full_json
+        elif key == "s":
+            save_snapshot(state, writer.stats(), classifier, snapshot_dir, layout_mode)
+        elif key == "q":
+            state.quit_requested = True
+
+
+def run(args: argparse.Namespace) -> int:
+    inbox = SignalInbox(args.input_dir)
+    classifier = build_classifier()
+    writer = CaptureOutputWriter(args.json_dir, keep=args.keep)
+    truth = load_ground_truth(REFERENCE_ROOT / "ground_truth.csv")
+    initial_files = sum(1 for path in args.input_dir.glob("*.json") if path.is_file())
+    state = DashboardState(args.count or initial_files, args.speed, ascii_mode=args.ascii)
+    state.full_json = args.full_json
+
+    live = None
+    console = None
+    last_refresh = 0.0
+    if not args.plain:
+        from rich.console import Console
+        from rich.live import Live
+
+        console = Console()
+        live = Live(console=console, refresh_per_second=10, screen=False, auto_refresh=False)
+        live.start()
+    else:
+        print(HEADER)
+        print(INPUT_BADGE)
+        print(f"Watching input folder: {args.input_dir.resolve()}")
+
+    try:
+        while not state.quit_requested:
+            _handle_keys(
+                state, writer, classifier, args.snapshot_dir, args.layout,
+                enabled=not args.no_keys,
+            )
+            while state.paused and not state.quit_requested:
+                _handle_keys(
+                    state, writer, classifier, args.snapshot_dir, args.layout,
+                    enabled=not args.no_keys,
+                )
+                time.sleep(0.05)
+            if state.quit_requested:
+                break
+
+            batch = inbox.poll()
+            state.add_duplicates(len(batch.duplicates))
+            for file_name in batch.duplicates:
+                if args.plain:
+                    print(f"DUPLICATE {file_name} skipped")
+            for rejected in batch.rejected:
+                state.add_rejected(f"{rejected.file_name}: {rejected.reason}")
+                if args.plain:
+                    print(f"REJECTED {rejected.file_name}: {rejected.reason}")
+
+            for signal in batch.signals:
+                if args.count > 0 and state.classified >= args.count:
+                    state.quit_requested = True
+                    break
+
+                _handle_keys(
+                    state,
+                    writer,
+                    classifier,
+                    args.snapshot_dir,
+                    args.layout,
+                    enabled=not args.no_keys,
+                )
+                while state.paused and not state.quit_requested:
+                    _handle_keys(
+                        state,
+                        writer,
+                        classifier,
+                        args.snapshot_dir,
+                        args.layout,
+                        enabled=not args.no_keys,
+                    )
+                    time.sleep(0.05)
+                if state.quit_requested:
+                    break
+
+                # Processing has no access to the scoring reference.
+                processed = process(signal, classifier, writer)
+                # The optional reference join happens after classification and writing.
+                scored = score(processed, truth)
+                state.add(scored)
+
+                if args.plain:
+                    row = state.recent[-1]
+                    print(
+                        f"{row.sequence_number:06d} {signal.observation_id} "
+                        f"expected={row.expected} output={row.classification} "
+                        f"severity={row.severity} path={processed.trace.path_taken} "
+                        f"classify_ms={row.processing_ms:.4f}"
+                    )
+                else:
+                    now = time.monotonic()
+                    if now - last_refresh >= 0.1:
+                        live.update(
+                            render_dashboard(
+                                state,
+                                writer.stats(),
+                                classifier,
+                                layout_mode=args.layout,
+                                terminal_width=console.size.width,
+                                terminal_height=console.size.height,
+                            ),
+                            refresh=True,
+                        )
+                        last_refresh = now
+
+                if args.snapshot_at and state.classified == args.snapshot_at:
+                    svg, text_path = save_snapshot(
+                        state, writer.stats(), classifier, args.snapshot_dir, args.layout
+                    )
+                    if args.plain:
+                        print(f"snapshot_svg={svg}")
+                        print(f"snapshot_text={text_path}")
+                if state.speed > 0:
+                    time.sleep(state.speed)
+
+            if not args.plain:
+                now = time.monotonic()
+                if now - last_refresh >= 0.1:
+                    live.update(
+                        render_dashboard(
+                            state,
+                            writer.stats(),
+                            classifier,
+                            layout_mode=args.layout,
+                            terminal_width=console.size.width,
+                            terminal_height=console.size.height,
+                        ),
+                        refresh=True,
+                    )
+                    last_refresh = now
+
+            if args.count > 0 and state.classified >= args.count:
+                break
+            if not batch.signals and not batch.rejected and not batch.duplicates:
+                time.sleep(0.05)
+    except KeyboardInterrupt:
+        print("\nLive scan stopped by user.")
+    finally:
+        if live is not None:
+            live.stop()
+
+    print_summary(calculate_summary(state.scored))
+    print(f"writer_stats={writer.stats()}")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Run the unified Module 1 -> 2 -> 3/4 file-exchange demonstration"
-    )
+    parser = argparse.ArgumentParser(description="Watch and classify Module 1 JSON captures")
+    parser.add_argument("--speed", type=float, default=0.2, help="seconds between captures")
+    parser.add_argument("--count", type=int, default=0, help="stop after N captures; 0 watches continuously")
+    parser.add_argument("--plain", action="store_true", help="disable the Rich dashboard")
+    parser.add_argument("--keep", action="store_true", help="keep existing JSON outputs")
+    parser.add_argument("--no-tests", action="store_true", help="accepted for command compatibility")
     parser.add_argument(
-        "--count",
-        type=int,
-        default=0,
-        help="mock captures; default 0 runs continuously until Ctrl+C",
+        "--input-dir",
+        type=Path,
+        default=DEFAULT_INPUT_ROOT,
+        help="flat folder watched for Module 1 JSON captures",
     )
-    parser.add_argument("--rate", type=float, help="MOCK Module 1 captures/second")
-    parser.add_argument(
-        "--speed",
-        type=float,
-        help="legacy option: seconds between captures (equivalent to 1/rate)",
-    )
-    parser.add_argument("--loop", action="store_true", help="repeat the scripted schedule")
-    parser.add_argument(
-        "--external-module1",
-        action="store_true",
-        help="disable the mock producer and continuously watch for real Module 1 files",
-    )
-    parser.add_argument("--keep", action="store_true", help="keep existing exchange files")
-    parser.add_argument("--plain", action="store_true", help="use line-oriented output")
-    parser.add_argument(
-        "--exit-on-complete",
-        action="store_true",
-        help="close the Rich dashboard when processing finishes",
-    )
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument(
-        "--no-tests",
-        action="store_true",
-        help="accepted for compatibility; the unified demo never runs tests at startup",
-    )
+    parser.add_argument("--json-dir", type=Path, default=DEFAULT_OUTPUT_ROOT, help="output root for recipient JSON")
+    parser.add_argument("--layout", choices=("auto", "full", "compact"), default="auto")
+    parser.add_argument("--full-json", action="store_true", help="show complete JSON in full layout")
+    parser.add_argument("--no-keys", action="store_true", help="disable interactive keyboard controls")
+    parser.add_argument("--snapshot-at", type=int, default=0, metavar="N")
+    parser.add_argument("--snapshot-dir", type=Path, default=ROOT / "reports" / "screenshots")
+    parser.add_argument("--ascii", action="store_true", help="use terminal-safe ASCII symbols")
     return parser
-
-
-def _capture_rate(args: argparse.Namespace, parser: argparse.ArgumentParser) -> float:
-    if args.rate is not None and args.speed is not None:
-        parser.error("use either --rate or --speed, not both")
-    if args.speed is not None:
-        if args.speed <= 0:
-            parser.error("--speed must be greater than zero")
-        return 1.0 / args.speed
-    rate = 5.0 if args.rate is None else args.rate
-    if rate <= 0:
-        parser.error("--rate must be greater than zero")
-    return rate
-
-
-def _guard_worker(
-    state: DemoState,
-    stop_event: threading.Event,
-    label: str,
-    worker: Callable[[], None],
-) -> None:
-    try:
-        worker()
-    except Exception as exc:  # Worker failures must be visible in the one-window UI.
-        state.add_error(f"{label}: {exc}")
-        stop_event.set()
-
-
-def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
-    if args.count < 0:
-        parser.error("--count must be zero or positive")
-    rate = _capture_rate(args, parser)
-    if args.external_module1 and args.count:
-        parser.error("--count cannot be used with --external-module1")
-    if args.external_module1 and (args.rate is not None or args.speed is not None or args.loop):
-        parser.error("--rate, --speed and --loop apply only to the mock Module 1 producer")
-
-    instance_lock = DemoInstanceLock(DEFAULT_EXCHANGE_ROOT.parent / ".demo_dashboard.lock")
-    try:
-        instance_lock.acquire()
-    except RuntimeError as exc:
-        parser.error(str(exc))
-    try:
-        return _run_dashboard(args, parser, rate)
-    finally:
-        instance_lock.release()
-
-
-def _run_dashboard(
-    args: argparse.Namespace,
-    parser: argparse.ArgumentParser,
-    rate: float,
-) -> int:
-
-    exchange_root = DEFAULT_EXCHANGE_ROOT
-    # Never remove files that may already have been delivered by a real Module 1.
-    if not args.external_module1 and not args.keep and exchange_root.exists():
-        shutil.rmtree(exchange_root)
-    ensure_exchange_folders(exchange_root)
-
-    state = DemoState()
-    stop_event = threading.Event()
-    producer_done = threading.Event()
-    producer_result = {"written": 0}
-    processor = FileProcessor(exchange_root, seed=args.seed)
-    receiver3 = MockFileReceiver(
-        3,
-        exchange_root,
-        quiet=True,
-        on_receive=lambda path, payload, decision: state.output_received(3, payload, decision),
-    )
-    receiver4 = MockFileReceiver(
-        4,
-        exchange_root,
-        quiet=True,
-        on_receive=lambda path, payload, decision: state.output_received(4, payload, decision),
-    )
-
-    def producer_target() -> None:
-        try:
-            producer_result["written"] = run_mock_module1(
-                exchange_root=exchange_root,
-                rate=rate,
-                count=args.count,
-                loop=args.loop,
-                seed=args.seed,
-                stop_event=stop_event,
-                done_event=producer_done,
-                on_write=state.input_written,
-                quiet=True,
-            )
-        finally:
-            producer_done.set()
-
-    worker_specs: list[tuple[str, Callable[[], None]]] = [
-        ("Module 2", lambda: processor.run(stop_event)),
-        ("MOCK Module 3", lambda: receiver3.run(stop_event)),
-        ("MOCK Module 4", lambda: receiver4.run(stop_event)),
-    ]
-    if not args.external_module1:
-        worker_specs.append(("MOCK Module 1", producer_target))
-    workers = [
-        threading.Thread(
-            target=_guard_worker,
-            args=(state, stop_event, label, target),
-            name=label.lower().replace(" ", "-"),
-        )
-        for label, target in worker_specs
-    ]
-    for worker in workers:
-        worker.start()
-
-    started = time.monotonic()
-    last_plain_received = -1
-    interrupted = False
-    run_complete = False
-    try:
-        if args.plain:
-            module1_mode = "EXTERNAL" if args.external_module1 else "SIMULATED"
-            print(
-                f"Unified file exchange - Module 1 is {module1_mode}; "
-                "Module 2 is REAL; Modules 3 and 4 are SIMULATED"
-            )
-            while True:
-                stats = processor.stats_snapshot()
-                if stats["received"] != last_plain_received:
-                    print_plain_snapshot(processor, exchange_root)
-                    last_plain_received = stats["received"]
-                if not args.external_module1 and _is_complete(
-                    producer_done, producer_result, processor, receiver3, receiver4
-                ):
-                    break
-                if stop_event.wait(0.1):
-                    break
-        else:
-            from rich.console import Console
-            from rich.live import Live
-
-            console = Console()
-            compact = console.width < 110 or console.height < 32
-            with Live(
-                build_dashboard(
-                    state,
-                    processor,
-                    started,
-                    compact=compact,
-                    module1_mock=not args.external_module1,
-                ),
-                console=console,
-                refresh_per_second=8,
-                screen=console.is_terminal,
-            ) as live:
-                while True:
-                    if not run_complete and not args.external_module1:
-                        run_complete = _is_complete(
-                            producer_done,
-                            producer_result,
-                            processor,
-                            receiver3,
-                            receiver4,
-                        )
-                    live.update(
-                        build_dashboard(
-                            state,
-                            processor,
-                            started,
-                            compact=compact,
-                            completed=run_complete,
-                            module1_mock=not args.external_module1,
-                        )
-                    )
-                    if run_complete and (args.exit_on_complete or not console.is_terminal):
-                        break
-                    if stop_event.wait(0.1):
-                        break
-    except KeyboardInterrupt:
-        interrupted = not run_complete
-        print("\nClosing dashboard..." if run_complete else "\nStopping workers...")
-    finally:
-        stop_event.set()
-        for worker in workers:
-            worker.join(timeout=5.0)
-        processor.process_pending()
-        receiver3.process_pending()
-        receiver4.process_pending()
-
-    errors = state.snapshot()["errors"]
-    if errors:
-        print("Worker errors:")
-        for error in errors:
-            print(f"  {error}")
-    print("\nFinal processor summary" + (" (interrupted)" if interrupted else ""))
-    print_plain_snapshot(processor, exchange_root)
-    print_exchange_summary(exchange_root)
-    return 1 if errors else 0
-
-
-def _is_complete(
-    producer_done: threading.Event,
-    producer_result: dict[str, int],
-    processor: FileProcessor,
-    receiver3: MockFileReceiver,
-    receiver4: MockFileReceiver,
-) -> bool:
-    if not producer_done.is_set():
-        return False
-    written = producer_result["written"]
-    stats = processor.stats_snapshot()
-    valid = sum(stats["class_counts"].values())
-    return (
-        stats["received"] >= written
-        and receiver3.received_count >= valid
-        and receiver4.received_count >= valid
-        and not list(processor.paths["inbox"].glob("*.json"))
-        and not list(processor.paths["module3"].glob("*.json"))
-        and not list(processor.paths["module4"].glob("*.json"))
-    )
 
 
 def main() -> int:
     parser = build_parser()
-    return run(parser.parse_args(), parser)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    args = parser.parse_args()
+    if args.speed < 0:
+        parser.error("--speed must be zero or greater")
+    if args.count < 0:
+        parser.error("--count must be zero or greater")
+    if args.snapshot_at < 0:
+        parser.error("--snapshot-at must be zero or greater")
+    return run(args)

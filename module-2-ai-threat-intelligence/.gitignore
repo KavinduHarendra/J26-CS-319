@@ -42,12 +42,18 @@ Thumbs.db
 # Append-only runtime security audit log
 data/audit_log.jsonl
 data/exchange/
+data/json_out/
+data/module1_input/
 data/.demo_dashboard.lock
 
 # Data files (large / sensitive — track deliberately)
 *.csv
 data/*.csv
+!data/real/module1_signals_clean/ground_truth.csv
+!data/real/module1_signals_clean/module1_flags_reference.csv
+!reports/real_feature_audit.csv
 data/external/
 data/*.pkl
 data/*.npy
 data/*.npz
+*.mat

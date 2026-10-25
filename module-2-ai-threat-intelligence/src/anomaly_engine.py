@@ -1,42 +1,49 @@
-"""
-anomaly_engine.py — Layer 2b Statistical Anomaly Engine.
+"""Nearest-normal-state anomaly detection for raw measurements."""
 
-Detects uncatalogued or unknown RF threats by identifying statistically significant
-deviations (|z| >= z_threshold) from the calibrated normal baseline.
-This engine activates only when no known jamming rule matched.
-"""
+from __future__ import annotations
 
-from typing import Optional
+from dataclasses import dataclass
+
+from src.baseline import Baseline
+from src.real_data import Signal
 
 
-class StatisticalAnomalyEngine:
-    """
-    Statistical Anomaly Engine evaluating feature z-scores against a threshold.
+@dataclass(frozen=True, slots=True)
+class AnomalyResult:
+    abnormal: bool
+    state: str
+    distance: float
+    normalized_distance: float
+    statistical_deviation: dict[str, float]
+    abnormal_features: tuple[str, ...]
+    evidence: tuple[str, ...]
 
-    Attributes:
-        z_threshold: Absolute z-score threshold beyond which a feature is
-                     considered statistically anomalous (default: 3.0).
-    """
 
-    def __init__(self, z_threshold: float = 3.0):
-        self.z_threshold = z_threshold
+class AnomalyEngine:
+    def __init__(self, baseline: Baseline) -> None:
+        self.baseline = baseline
 
-    def evaluate(self, deviations: dict) -> Optional[dict]:
-        """
-        Evaluate deviations dictionary for statistically significant outliers.
-
-        Args:
-            deviations: Deviations dictionary produced by NormalBaseline.deviations().
-
-        Returns:
-            Dict containing anomalous feature names and their z-scores if any feature
-            exceeds the threshold, else None.
-        """
-        z_scores = deviations.get("z_scores", {})
-        significant = {f: z for f, z in z_scores.items() if abs(z) >= self.z_threshold}
-        if not significant:
-            return None
-        return {
-            "anomalous_features": list(significant.keys()),
-            "z_scores": significant,
-        }
+    def evaluate(self, signal: Signal) -> AnomalyResult:
+        state, distance, deviations = self.baseline.nearest(signal)
+        normalized = distance / state.anomaly_limit
+        ranked = sorted(deviations, key=deviations.get, reverse=True)
+        abnormal_features = tuple(
+            feature for feature in ranked if deviations[feature] > state.anomaly_limit
+        )
+        evidence = ()
+        if normalized > 1.0:
+            named = abnormal_features or tuple(ranked[:3])
+            evidence = tuple(
+                f"{feature} distance {deviations[feature]:.2f} from {state.name} "
+                f"exceeds state limit {state.anomaly_limit:.2f}"
+                for feature in named
+            )
+        return AnomalyResult(
+            abnormal=normalized > 1.0,
+            state=state.name,
+            distance=distance,
+            normalized_distance=normalized,
+            statistical_deviation=deviations,
+            abnormal_features=abnormal_features,
+            evidence=evidence,
+        )
