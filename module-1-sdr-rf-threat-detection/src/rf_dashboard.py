@@ -7,7 +7,7 @@
 # Don't run serial_logger.py alongside this - it reads the Arduino itself.
 #   py rf_dashboard.py
 
-import sys, time, json, csv, collections, datetime, threading
+import sys, os, time, json, collections, datetime, threading
 import numpy as np
 
 try:
@@ -39,6 +39,9 @@ SNR_PRESENT_DB = 8.0
 OCC_THRESH_DB  = 6.0
 DUP_PEAK_DB    = 15.0
 DC_GUARD       = 5000.0
+AVG_BLOCKS     = 4        # average this many FFT frames per update (steadier numbers)
+SMOOTH_N       = 3        # median-smooth the last N readings before saving
+CLIP_WARN      = 0.90     # warn if samples get this close to full scale (overload)
 
 # Labels describe which transmitter(s) were on - ground truth about the test rig,
 # not a jamming verdict. TX1 is the normal link, TX2 the second transmitter.
@@ -52,13 +55,31 @@ ACCENT, GREEN, AMBER, RED = "#2f81f7", "#2ea043", "#d29922", "#f85149"
 
 
 class SdrReader(QtCore.QThread):
+    # Owns ALL access to the SDR. The GUI never touches the dongle directly - it
+    # requests a gain change and this thread applies it between reads, so the USB
+    # device is only ever used from one thread.
     def __init__(self, sdr):
-        super().__init__(); self.sdr = sdr; self.latest = None; self.running = True
+        super().__init__()
+        self.sdr = sdr; self.latest = None; self.running = True
+        self._gain_request = None            # set by request_gain(), applied in run()
+        self.actual_gain = None
+
+    def request_gain(self, g):
+        self._gain_request = g               # just store it; the reader applies it
 
     def run(self):
         while self.running:
-            try: self.latest = self.sdr.read_samples(CHUNK)
-            except Exception as e: print("SDR read error:", e); time.sleep(0.2)
+            if self._gain_request is not None:
+                g = self._gain_request; self._gain_request = None
+                try:
+                    self.sdr.gain = g
+                    self.actual_gain = self.sdr.gain   # what the dongle really set
+                except Exception as e:
+                    print("gain set error:", e)
+            try:
+                self.latest = self.sdr.read_samples(CHUNK)
+            except Exception as e:
+                print("SDR read error:", e); time.sleep(0.2)
 
     def stop(self): self.running = False; self.wait(1000)
 
@@ -134,6 +155,9 @@ class Dashboard(QtWidgets.QWidget):
         self.t_hist = collections.deque(maxlen=TRACE_LEN)
         self.pw_hist = collections.deque(maxlen=TRACE_LEN)
         self.snr_hist = collections.deque(maxlen=TRACE_LEN)
+        self.sm_snr = collections.deque(maxlen=SMOOTH_N)
+        self.sm_pw = collections.deque(maxlen=SMOOTH_N)
+        self.sm_bw = collections.deque(maxlen=SMOOTH_N)
         self.t0 = time.time(); self.count = 0
         self.n_tx1 = self.n_both = self.n_none = 0
         self._build_ui(); self._open_logs()
@@ -179,6 +203,21 @@ class Dashboard(QtWidgets.QWidget):
         self.lbl.setStyleSheet(f"font-size:15px; font-weight:700; padding:8px; color:{TEXT}; background:{PANEL}; border-radius:8px;")
         side.addWidget(self.lbl)
 
+        # live gain control - drag to change the SDR gain without editing the file
+        gbox = QtWidgets.QFrame(); gbox.setStyleSheet(f"background:{PANEL}; border-radius:10px;")
+        gl = QtWidgets.QVBoxLayout(gbox); gl.setContentsMargins(16, 10, 16, 10)
+        self.gain_lbl = QtWidgets.QLabel(f"SDR gain: {GAIN:.1f} dB")
+        self.gain_lbl.setStyleSheet(f"color:{TEXT}; font-size:13px; font-weight:700;")
+        gl.addWidget(self.gain_lbl)
+        self.gain_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.gain_slider.setMinimum(0); self.gain_slider.setMaximum(496)   # 0.0 - 49.6 dB
+        self.gain_slider.setValue(int(GAIN * 10))
+        self.gain_slider.valueChanged.connect(self._set_gain)
+        gl.addWidget(self.gain_slider)
+        hint = QtWidgets.QLabel("Lower this if you see the CLIPPING warning.")
+        hint.setStyleSheet(f"color:{MUTED}; font-size:10px;"); gl.addWidget(hint)
+        side.addWidget(gbox)
+
         box = QtWidgets.QFrame(); box.setStyleSheet(f"background:{PANEL}; border-radius:10px;")
         bl = QtWidgets.QVBoxLayout(box); bl.setContentsMargins(16, 14, 16, 14)
         h = QtWidgets.QLabel("MEASURED FEATURES"); h.setStyleSheet(f"color:{MUTED}; font-size:11px; font-weight:700; letter-spacing:1px;")
@@ -193,39 +232,82 @@ class Dashboard(QtWidgets.QWidget):
                                 "Deciding if it is jamming is Module 2.")
         note.setStyleSheet(f"color:{MUTED}; font-size:11px; padding:2px;"); note.setWordWrap(True); side.addWidget(note)
 
+    def _set_gain(self, slider_val):
+        g = slider_val / 10.0
+        self.reader.request_gain(g)           # applied safely inside the reader thread
+        self.gain_lbl.setText(f"SDR gain: {g:.1f} dB (requested)")
+
     def _open_logs(self):
-        self.cols = ["signal_id", "timestamp", "elapsed_s", "peak_freq_mhz", "peak_db",
-                     "noise_db", "snr_db", "band_power_dbfs", "occupied_bw_khz",
-                     "spectral_flatness", "interference", "channel", "signal_present",
-                     "power_anomaly", "phase", "label"]
+        # one JSON file per signal, written into a per-session folder
         stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.ds_name = f"dataset_{stamp}.csv"
-        self.csv_f = open(self.ds_name, "w", newline="")
-        self.csv_w = csv.DictWriter(self.csv_f, fieldnames=self.cols); self.csv_w.writeheader()
-        print("Saving dataset to:", self.ds_name)
+        self.out_dir = f"dataset_{stamp}"
+        os.makedirs(self.out_dir, exist_ok=True)
+        print("Saving one JSON per signal into:", self.out_dir)
 
     def update(self):
         x = self.reader.latest
         if x is None: return
+
+        # show the gain the dongle actually applied (confirms the slider worked)
+        if self.reader.actual_gain is not None and self.reader._gain_request is None:
+            self.gain_lbl.setText(f"SDR gain: {self.reader.actual_gain:.1f} dB")
+
+        # clipping check on the raw samples - an overloaded dongle makes every
+        # measurement wrong, so flag it instead of silently logging bad data
+        clipping = float(np.max(np.abs(x))) > CLIP_WARN
+
+        # power spectral density, averaged over all available frames for a steadier read
         m = len(x) // FFT
         seg = x[:m * FFT].reshape(m, FFT) * self.win
         S = np.mean(np.abs(np.fft.fftshift(np.fft.fft(seg, axis=1), axes=1)) ** 2, axis=0)
-        S /= (np.sum(self.win ** 2) * SAMPLE_RATE); psd_db = 10 * np.log10(S + 1e-12)
+        S /= (np.sum(self.win ** 2) * SAMPLE_RATE)
+        psd_db = 10 * np.log10(S + 1e-12)
+
         mid = FFT // 2; g = int(DC_GUARD / self.binhz)
         search = psd_db.copy(); search[mid - g: mid + g + 1] = -300
-        noise_db = float(np.percentile(psd_db, 30)); pk = int(np.argmax(search))
-        peak_db = float(search[pk]); peak_freq = float(self.freqs[pk]); snr = peak_db - noise_db
+
+        # noise floor from the quietest 25% of bins (ignores the signal itself)
+        noise_db = float(np.percentile(psd_db, 25))
+        pk = int(np.argmax(search))
+        peak_db = float(search[pk]); peak_freq = float(self.freqs[pk])
+        snr = peak_db - noise_db
         band_power = float(10 * np.log10(np.mean(np.abs(x) ** 2) + 1e-12))
-        occ_bw = float(np.sum(search > (noise_db + OCC_THRESH_DB)) * self.binhz)
-        lin = S + 1e-12; flat = float(np.exp(np.mean(np.log(lin))) / np.mean(lin))
+
+        # occupied bandwidth as a contiguous span around the peak, so stray bins
+        # elsewhere don't inflate it
+        thresh = noise_db + OCC_THRESH_DB
+        lo_i = hi_i = pk
+        while lo_i > 0 and search[lo_i - 1] > thresh: lo_i -= 1
+        while hi_i < FFT - 1 and search[hi_i + 1] > thresh: hi_i += 1
+        occ_bw = float((hi_i - lo_i + 1) * self.binhz)
+
+        lin = S + 1e-12
+        flat = float(np.exp(np.mean(np.log(lin))) / np.mean(lin))
         present = snr > SNR_PRESENT_DB
+
         strong = np.where(search > (noise_db + DUP_PEAK_DB))[0]
         inter = int(len(np.where(np.diff(strong) > int(40000 / self.binhz))[0]) + 1) if len(strong) else 0
+
         anomaly = False
         if present:
             if len(self.baseline) >= 20 and band_power - np.median(self.baseline) > 15: anomaly = True
             self.baseline.append(band_power)
-        channel = ("bad" if snr < 10 else "moderate" if snr < 25 else "good") if present else "idle"
+
+        # smooth the saved numbers with a short median window to kill single-frame jitter
+        self.sm_snr.append(snr); self.sm_pw.append(band_power); self.sm_bw.append(occ_bw)
+        snr = float(np.median(self.sm_snr)); band_power = float(np.median(self.sm_pw))
+        occ_bw = float(np.median(self.sm_bw))
+
+        # signal_level = how strong the received signal is, from the SNR margin.
+        # This is the measured signal strength, not a link-health verdict.
+        if not present:
+            signal_level = "none"
+        elif snr >= 30:
+            signal_level = "strong"
+        elif snr >= 15:
+            signal_level = "medium"
+        else:
+            signal_level = "weak"
 
         phase = self.ard.phase
         label = phase_to_label(phase, present)
@@ -233,13 +315,19 @@ class Dashboard(QtWidgets.QWidget):
         self.curve.setData(self.freqs, psd_db); self.noise_line.setValue(noise_db)
         self.peak_dot.setData([peak_freq], [peak_db]) if present else self.peak_dot.setData([], [])
         self.wf = np.roll(self.wf, 1, axis=0); self.wf[0] = psd_db
-        lo, hi = noise_db, max(noise_db + 5, peak_db)
+        # fixed colour window relative to the current noise floor: blue at the
+        # noise, red ~40 dB above it. Stays readable no matter how strong the signal.
+        lo = noise_db
+        hi = noise_db + 45
         self.img.setImage(np.clip((self.wf.T - lo) / (hi - lo), 0, 1), autoLevels=False, levels=(0, 1))
         now = time.time() - self.t0
         self.t_hist.append(now); self.pw_hist.append(band_power); self.snr_hist.append(snr if present else 0.0)
         self.tr_pw.setData(list(self.t_hist), list(self.pw_hist)); self.tr_snr.setData(list(self.t_hist), list(self.snr_hist))
 
-        if present:
+        if clipping:
+            self.status.setText("CLIPPING - LOWER GAIN")
+            self.status.setStyleSheet(f"font-size:20px; font-weight:700; padding:14px; color:white; background:{AMBER}; border-radius:10px;")
+        elif present:
             self.status.setText("SIGNAL  PRESENT")
             self.status.setStyleSheet(f"font-size:22px; font-weight:700; padding:14px; color:white; background:{ACCENT}; border-radius:10px;")
         else:
@@ -255,7 +343,7 @@ class Dashboard(QtWidgets.QWidget):
             row("Peak power", f"{peak_db:.1f} dB") + row("Noise floor", f"{noise_db:.1f} dB") +
             row("SNR", f"{snr:.1f} dB") + row("Bandwidth", f"{occ_bw/1e3:.1f} kHz") +
             row("Flatness", f"{flat:.2f}") + row("Interference", f"{inter}") +
-            row("Channel", channel) + row("Signal", "YES" if present else "no") +
+            row("Signal level", signal_level) + row("Signal", "YES" if present else "no") +
             row("Power anom.", "YES" if anomaly else "no") + "</div>")
 
         self.count += 1
@@ -265,21 +353,34 @@ class Dashboard(QtWidgets.QWidget):
         self.counter.setText(f"Rows saved: {self.count}   "
                              f"(tx1 {self.n_tx1}, tx1_tx2 {self.n_both}, none {self.n_none})")
 
-        rec = {"signal_id": f"S{self.count:05d}",
-               "timestamp": datetime.datetime.now().isoformat(timespec="milliseconds"),
-               "elapsed_s": round(now, 2), "peak_freq_mhz": round(peak_freq, 4),
-               "peak_db": round(peak_db, 1), "noise_db": round(noise_db, 1), "snr_db": round(snr, 1),
-               "band_power_dbfs": round(band_power, 1), "occupied_bw_khz": round(occ_bw / 1e3, 1),
-               "spectral_flatness": round(flat, 3), "interference": inter, "channel": channel,
-               "signal_present": int(present), "power_anomaly": int(anomaly),
-               "phase": phase, "label": label}
-        self.csv_w.writerow(rec); self.csv_f.flush()
+        sid = f"S{self.count:05d}"
+        rec = {
+            "schema_version": "1.0",
+            "source_module": "module1_sdr_rf_threat_detection",
+            "observation_id": sid,
+            "sequence_number": self.count,
+            "timestamp": datetime.datetime.now().isoformat(timespec="milliseconds"),
+            "elapsed_s": round(now, 2),
+            "measurements": {
+                "peak_freq_mhz": round(peak_freq, 4),
+                "peak_db": round(peak_db, 1),
+                "noise_db": round(noise_db, 1),
+                "snr_db": round(snr, 1),
+                "band_power_dbfs": round(band_power, 1),
+                "occupied_bw_khz": round(occ_bw / 1e3, 1),
+                "spectral_flatness": round(flat, 3),
+            },
+        }
+        fname = f"{self.count:06d}_{sid}.json"       # e.g. 000154_S00154.json
+        with open(os.path.join(self.out_dir, fname), "w") as jf:
+            json.dump(rec, jf, indent=2)
 
     def closeEvent(self, e):
         self.timer.stop(); self.reader.stop(); self.ard.stop()
         try: self.sdr.close()
         except Exception: pass
-        self.csv_f.close(); e.accept()
+        print(f"Saved {self.count} JSON files in {self.out_dir}")
+        e.accept()
 
 
 def main():
