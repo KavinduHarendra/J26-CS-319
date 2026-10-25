@@ -185,7 +185,7 @@ def get_risk_history(limit: int = 50) -> list[dict]:
     with closing(sqlite3.connect(DB_PATH)) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT incident_id, timestamp, risk_score, risk_level, "
+            "SELECT incident_id, timestamp, observation_id, risk_score, risk_level, "
             "recommended_response, classification FROM incidents "
             "ORDER BY timestamp DESC, CAST(SUBSTR(incident_id, 5) AS INTEGER) DESC LIMIT ?", (limit,)
         ).fetchall()
