@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+@theme {
+  --color-cyber-bg: #0a0e17;
+  --color-cyber-panel: #111827;
+  --color-cyber-surface: #0d1726;
+  --color-cyber-border: #1f2937;
+  --color-cyber-accent: #06b6d4;
+  --color-cyber-accent2: #8b5cf6;
+  --color-cyber-danger: #ef4444;
+  --color-cyber-warning: #f59e0b;
+  --color-cyber-success: #10b981;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--color-cyber-bg);
+  color: var(--dashboard-text, #e5e7eb);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.integration-upload-intelligence,
+.integration-upload-communication {
+  --upload-accent: #60a5fa;
+  --upload-surface: #132744;
+  --upload-button: #234b7c;
+}
+
+.integration-upload {
+  background: var(--upload-surface);
+  border-color: var(--upload-accent);
+  border-top-width: 3px;
+}
+
+.integration-upload svg { color: var(--upload-accent); }
+.integration-upload input::file-selector-button {
+  background: var(--upload-button);
+  color: #ffffff;
+}
+.integration-upload input:hover::file-selector-button { background: var(--upload-button); filter: brightness(1.15); }
+.integration-upload:focus-within { outline: 2px solid var(--upload-accent); outline-offset: 3px; }
+
+.integration-run {
+  background: #22d3ee;
+  border-color: #67e8f9;
+  color: #082f49;
+}
+.integration-run:hover:not(:disabled) { background: #67e8f9; }
+.integration-run:focus-visible { outline: 2px solid #22d3ee; outline-offset: 4px; }
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-cyber-panel);
+}
+
+:root {
+  color-scheme: dark;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #374151;
+  border-radius: 4px;
+}

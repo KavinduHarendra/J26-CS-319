@@ -49,6 +49,9 @@ data/.demo_dashboard.lock
 # Data files (large / sensitive — track deliberately)
 *.csv
 data/*.csv
+!data/real/module1_signals_clean/ground_truth.csv
+!data/real/module1_signals_clean/module1_flags_reference.csv
+!reports/real_feature_audit.csv
 data/external/
 data/*.pkl
 data/*.npy
