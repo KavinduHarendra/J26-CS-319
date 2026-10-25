@@ -847,6 +847,7 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
               <thead>
                 <tr className="text-gray-500 border-b border-gray-800">
                   <th className="text-left py-1 px-2">Incident</th>
+                  <th className="text-left py-1 px-2">Observation ID</th>
                   <th className="text-left py-1 px-2">Date</th>
                   <th className="text-left py-1 px-2">Time</th>
                   <th className="text-left py-1 px-2">Risk</th>
@@ -859,6 +860,7 @@ export default function Evaluate({ mode = 'files' }: { mode?: 'files' | 'testing
                 {history.map((h, i) => (
                   <tr key={i} className="border-b border-gray-800/50 hover:bg-gray-800/30">
                     <td className="py-1 px-2 text-cyan-400 font-mono">{h.incident_id as string}</td>
+                    <td className="py-1 px-2 font-mono">{String(h.observation_id ?? '')}</td>
                     <td className="py-1 px-2 text-gray-400">{String(h.timestamp).slice(0, 10)}</td>
                     <td className="py-1 px-2 text-gray-400">{String(h.timestamp).slice(11, 19)}</td>
                     <td className="py-1 px-2 font-mono">{h.risk_score as number}</td>

@@ -119,6 +119,7 @@ def validate_records(records: list[dict]) -> tuple[list[dict], list[dict]]:
     valid: list[dict] = []
     rejected: list[dict] = []
     for original in records:
+    for index, original in enumerate(records, start=1):
         record = dict(original)
         classification = canonical_classification(record.get("classification"))
         severity = canonical_severity(record.get("severity"))
@@ -155,6 +156,7 @@ def decide_window(counts: Counter, high_unknown_count: int) -> tuple[str, str, s
     jam_medium = counts[("JAMMING", "MEDIUM")]
     jam_low = counts[("JAMMING", "LOW")]
 
+    # High-priority jamming is the strongest rule.
     if jam_high:
         return (
             "SECURE COMMUNICATION MUST",
@@ -162,6 +164,7 @@ def decide_window(counts: Counter, high_unknown_count: int) -> tuple[str, str, s
             "must",
         )
 
+    # The user-approved combination rules override the ordinary medium rule.
     if high_unknown_count and jam_medium:
         return (
             "SECURE COMMUNICATION MUST",
@@ -279,16 +282,19 @@ def build_minute_summary(records: list[dict], normal_minutes_required: int) -> p
                     reason += (
                         f" {consecutive_normal} consecutive observed NORMAL minute(s) reached "
                         "the configured release threshold; normal communication may be restored."
+                        f"the configured release threshold; normal communication may be restored."
                     )
                 else:
                     decision = "KEEP SECURE — RECHECK NEXT MINUTE"
                     reason += (
                         f" Secure recommendation is retained until {normal_minutes_required} "
                         "consecutive observed NORMAL minute(s) are reached."
+                        f"consecutive observed NORMAL minute(s) are reached."
                     )
             else:
                 active_state = "NORMAL_MONITORING"
         else:
+            # Further checking cannot count as a safe/normal minute. Preserve any secure state.
             consecutive_normal = 0
             if active_state == "SECURE_RECOMMENDED":
                 decision = "KEEP SECURE — FURTHER CHECKING"
@@ -317,6 +323,9 @@ def build_minute_summary(records: list[dict], normal_minutes_required: int) -> p
     return pd.DataFrame(rows)
 
 
+# -----------------------------
+# UI
+# -----------------------------
 with st.sidebar:
     st.header("Decision settings")
     normal_minutes_required = st.number_input(
@@ -363,6 +372,7 @@ if records is None:
     st.info("Files selected. Click **Analyze uploaded observations** to run the staging analysis.")
     st.stop()
 
+# Recompute when the release threshold changes.
 rejected_records = st.session_state.get("staging_rejected", [])
 parse_errors = st.session_state.get("staging_parse_errors", [])
 if st.session_state.get("staging_settings_normal_minutes") != int(normal_minutes_required):
