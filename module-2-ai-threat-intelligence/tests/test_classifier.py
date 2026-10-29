@@ -3,7 +3,14 @@ from pathlib import Path
 
 import pytest
 
-from src.classifier import Classification, Severity, build_classifier
+from src.classifier import (
+    SEVERITY_HIGH_FROM,
+    SEVERITY_MEDIUM_FROM,
+    Classification,
+    Severity,
+    ThreatClassifier,
+    build_classifier,
+)
 from src.real_data import Signal, load_signal
 
 
@@ -28,7 +35,7 @@ def test_clear_normal_signal_is_normal(classifier, normal_signal):
     assert output.triggered_rule is None
 
 
-def test_r1_has_priority_and_jamming_severity_uses_uncalibrated_cutoffs(
+def test_r1_has_priority_and_jamming_severity_uses_calibrated_cutoffs(
     classifier, normal_signal
 ):
     output = classifier.classify(
@@ -75,3 +82,16 @@ def test_invalid_input_is_rejected_and_never_returns_normal(classifier):
 def test_signal_constructor_rejects_nan(normal_signal):
     with pytest.raises(ValueError, match="finite"):
         replace(normal_signal, snr_db=float("nan"))
+
+
+@pytest.mark.parametrize(
+    ("magnitude", "expected"),
+    [
+        (SEVERITY_MEDIUM_FROM - 0.01, Severity.LOW),
+        (SEVERITY_MEDIUM_FROM, Severity.MEDIUM),
+        (SEVERITY_HIGH_FROM - 0.01, Severity.MEDIUM),
+        (SEVERITY_HIGH_FROM, Severity.HIGH),
+    ],
+)
+def test_severity_boundaries_follow_calibrated_cutoffs(magnitude, expected):
+    assert ThreatClassifier._severity(magnitude) is expected

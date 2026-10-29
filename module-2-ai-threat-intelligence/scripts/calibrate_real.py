@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.baseline import Baseline
 from src.real_data import Signal, load_stream
 from src.scoring_data import load_ground_truth
 
@@ -162,6 +163,19 @@ def build_configuration(data_root: Path = DATA_ROOT) -> tuple[dict, TimeSplit]:
     return configuration, split
 
 
+def severity_cutoffs(configuration: dict, split: TimeSplit) -> tuple[float, float]:
+    """Return the 33rd/66th percentile magnitudes of calibration-half jamming.
+
+    Magnitude is the max |x - mean| / spread distance to the nearest normal
+    state.  Bottom third maps to LOW, middle to MEDIUM, top to HIGH.
+    """
+    baseline = Baseline.from_config(configuration)
+    jamming = split.calibration["CARRIER"] + split.calibration["PULSED_50_50"]
+    magnitudes = [baseline.nearest(signal)[1] for signal in jamming]
+    medium_from, high_from = statistics.quantiles(magnitudes, n=3, method="inclusive")
+    return medium_from, high_from
+
+
 def write_configuration(configuration: dict, path: Path = OUTPUT_PATH) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -187,6 +201,9 @@ def main() -> int:
     print(f"T_BW={thresholds['T_BW']:.6f}")
     print(f"idle_anomaly_limit={states['idle']['anomaly_limit']:.6f}")
     print(f"legit_anomaly_limit={states['legit_ook']['anomaly_limit']:.6f}")
+    medium_from, high_from = severity_cutoffs(configuration, split)
+    print(f"severity_medium_from={medium_from:.6f}")
+    print(f"severity_high_from={high_from:.6f}")
     print(f"wrote={OUTPUT_PATH.relative_to(ROOT)}")
     return 0
 

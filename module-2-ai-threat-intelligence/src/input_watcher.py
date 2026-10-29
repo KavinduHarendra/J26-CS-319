@@ -107,7 +107,3 @@ class SignalInbox:
 
         ready.sort(key=lambda signal: (signal.sequence_number, signal.observation_id))
         return InboxBatch(tuple(ready), tuple(rejected), tuple(duplicates))
-
-    @property
-    def handled_count(self) -> int:
-        return len(self._handled_names)

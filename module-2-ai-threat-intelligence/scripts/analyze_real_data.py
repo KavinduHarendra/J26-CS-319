@@ -155,7 +155,7 @@ def write_report():
         f"- classify() p95: {p95:.4f} ms", f"- timed loop mean: {wall_ms / len(timed):.4f} ms per record",
         f"- NFR01 classify p95 under 50 ms: {p95 < 50}", "", "## Decision and limits", "",
         "The retired four-feature path is not used. R1 identifies a strong narrowband measurement; otherwise the nearest-state anomaly score decides between unknown anomaly and normal.", "",
-        "This evidence comes from one session and one legitimate device. The measured class margins are wide and may not transfer to other radios or environments. R1 could flag a narrowband legitimate device and may miss a wideband jammer. Severity cut-offs are uncalibrated placeholders.", "",
+        "This evidence comes from one session and one legitimate device. The measured class margins are wide and may not transfer to other radios or environments. R1 could flag a narrowband legitimate device and may miss a wideband jammer. Severity cut-offs are the 33rd/66th percentiles of calibration-half jamming magnitudes, so with 48 captures from one session they are coarse.", "",
     ])
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text("\n".join(lines), encoding="utf-8")

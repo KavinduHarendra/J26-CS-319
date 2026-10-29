@@ -1,4 +1,4 @@
-cd /d "E:\Projects\Reserch Module\ai-threat-intel-module"
+cd /d "E:\Projects\Reserch Module\module-2-ai-threat-intel-module"
 .venv\Scripts\activate.bat
 
 .\.venv\Scripts\python.exe demo.py
