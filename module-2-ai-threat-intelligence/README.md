@@ -55,7 +55,7 @@ This writes `config/thresholds_real.json`. Calibration reads `known_signals/` on
 
 The classifier has one rule. R1 returns `JAMMING` when `snr_db >= 25.8` and `0 < occupied_bw_khz <= 137.5`. If R1 does not fire, the record is compared with the nearest idle or legitimate-transmission state. A normalised distance above 1 returns `UNKNOWN_ANOMALY`; otherwise it returns `NORMAL`.
 
-The decision order is rule, anomaly, then normal. Severity boundaries are uncalibrated placeholders and are labelled that way in the source and evaluation report.
+The decision order is rule, anomaly, then normal. Severity uses one magnitude for both threat paths: the max |x - mean| / spread distance to the nearest normal state. LOW is below 9.4135, MEDIUM is from 9.4135, HIGH is from 16.0383. These are the 33rd/66th percentiles of calibration-half CARRIER + PULSED_50_50 jamming (see `scripts/calibrate_real.py:severity_cutoffs`).
 
 ## JSON output
 
@@ -122,6 +122,43 @@ watching continuously; a positive count stops after that many valid captures.
 the full layout at 160 columns by 45 rows or larger and uses the compact layout
 otherwise. `--json-dir` changes the recipient output root, `--keep` preserves
 existing output files, and `--no-keys` disables Windows keyboard handling.
+
+## HTTP API
+
+`src/api.py` serves one endpoint, `POST /classify`. The request body is one
+Module 1 capture in the same JSON shape as the files in `data/module1_input/`.
+The response is the classifier's `ThreatOutput` as JSON. The classifier is built
+once at startup from `config/thresholds_real.json`. Invalid input, including
+any label or phase key, is rejected with HTTP 422.
+
+Start the API from this folder:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn src.api:app --reload
+```
+
+Classify a recorded capture (use `curl.exe` in Windows PowerShell, where
+`curl` is an alias for `Invoke-WebRequest`):
+
+```powershell
+curl.exe -X POST http://127.0.0.1:8000/classify -H "Content-Type: application/json" --data-binary "@data/real/module1_signals_clean/known_signals/000001_S00001.json"
+```
+
+Or send the body inline (bash):
+
+```bash
+curl -X POST http://127.0.0.1:8000/classify \
+  -H "Content-Type: application/json" \
+  -d '{"schema_version": "1.0", "source_module": "module1_sdr_rf_threat_detection",
+       "observation_id": "S90001", "sequence_number": 90001,
+       "timestamp": "2026-10-23T16:30:00.000", "elapsed_s": 460.0,
+       "measurements": {"peak_freq_mhz": 433.92, "peak_db": -60.0, "noise_db": -106.0,
+                        "snr_db": 46.0, "band_power_dbfs": -25.0,
+                        "occupied_bw_khz": 12.0, "spectral_flatness": 0.01}}'
+```
+
+That body is jamming-like (strong, narrow) and returns `"classification": "JAMMING"`.
+Interactive docs are at <http://127.0.0.1:8000/docs>.
 
 ## Evaluation and tests
 

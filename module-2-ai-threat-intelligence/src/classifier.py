@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Mapping
 
 from src.anomaly_engine import AnomalyEngine
 from src.baseline import Baseline
@@ -16,6 +16,18 @@ from src.rule_engine import RuleEngine, build_rule_engine
 
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "thresholds_real.json"
+
+# Severity cut-offs on threat magnitude: the max |x - mean| / spread distance to
+# the nearest normal state (Baseline.nearest).  Derived 2026-10-29 from the
+# percentile distribution of experimental Jamming magnitudes: the 33rd and 66th
+# percentiles (bottom third LOW, middle MEDIUM, top HIGH) over the first
+# chronological half of CARRIER + PULSED_50_50 captures (n=48) in
+# data/real/module1_signals_clean/known_signals, recorded 2026-10-23
+# (dataset_20261023_162220.csv).  Reproduce with
+# scripts/calibrate_real.py:severity_cutoffs(); tests/test_calibrate_real.py
+# fails if these constants drift from that computation.
+SEVERITY_MEDIUM_FROM = 9.4135
+SEVERITY_HIGH_FROM = 16.0383
 
 
 class Classification(str, Enum):
@@ -88,12 +100,14 @@ class DecisionTrace:
 
 
 class ThreatClassifier:
-    """Stateless decision pipeline; severity cut-offs are uncalibrated placeholders."""
+    """Stateless decision pipeline with percentile-calibrated severity cut-offs."""
 
-    def __init__(self, baseline: Baseline, rules: RuleEngine) -> None:
+    def __init__(
+        self, baseline: Baseline, rules: RuleEngine, anomaly: AnomalyEngine | None = None
+    ) -> None:
         self.baseline = baseline
         self.rules = rules
-        self.anomaly = AnomalyEngine(baseline)
+        self.anomaly = anomaly if anomaly is not None else AnomalyEngine(baseline)
 
     @classmethod
     def from_config(cls, path: str | Path = DEFAULT_CONFIG_PATH) -> "ThreatClassifier":
@@ -108,18 +122,10 @@ class ThreatClassifier:
         )
 
     @staticmethod
-    def _jamming_severity(snr_db: float) -> Severity:
-        if snr_db >= 50.0:
+    def _severity(magnitude: float) -> Severity:
+        if magnitude >= SEVERITY_HIGH_FROM:
             return Severity.HIGH
-        if snr_db >= 40.0:
-            return Severity.MEDIUM
-        return Severity.LOW
-
-    @staticmethod
-    def _anomaly_severity(normalized_distance: float) -> Severity:
-        if normalized_distance > 3.0:
-            return Severity.HIGH
-        if normalized_distance > 1.5:
+        if magnitude >= SEVERITY_MEDIUM_FROM:
             return Severity.MEDIUM
         return Severity.LOW
 
@@ -151,7 +157,7 @@ class ThreatClassifier:
 
         if rule_result.triggered_rule is not None:
             classification = Classification.JAMMING
-            severity: Severity | None = self._jamming_severity(signal.snr_db)
+            severity: Severity | None = self._severity(anomaly_result.distance)
             evidence = list(rule_result.evidence)
             triggered_rule = rule_result.triggered_rule
             abnormal_features: list[str] = []
@@ -164,7 +170,7 @@ class ThreatClassifier:
             )
         elif anomaly_result.abnormal:
             classification = Classification.UNKNOWN_ANOMALY
-            severity = self._anomaly_severity(anomaly_result.normalized_distance)
+            severity = self._severity(anomaly_result.distance)
             evidence = list(anomaly_result.evidence)
             triggered_rule = None
             abnormal_features = list(anomaly_result.abnormal_features)
@@ -172,14 +178,14 @@ class ThreatClassifier:
             plain_english = (
                 f"Rule R1 did not fire. The nearest normal state is {anomaly_result.state}; "
                 f"its normalized distance is {anomaly_result.normalized_distance:.2f}, "
-                "above the limit 1.00, so this is an unknown anomaly."
+                f"above the limit {self.anomaly.threshold:.2f}, so this is an unknown anomaly."
             )
         else:
             classification = Classification.NORMAL
             severity = None
             evidence = [
                 f"Nearest normal state {anomaly_result.state}; normalized distance "
-                f"{anomaly_result.normalized_distance:.2f} <= 1.00"
+                f"{anomaly_result.normalized_distance:.2f} <= {self.anomaly.threshold:.2f}"
             ]
             triggered_rule = None
             abnormal_features = []
@@ -187,7 +193,7 @@ class ThreatClassifier:
             plain_english = (
                 f"Rule R1 did not fire. The nearest normal state is {anomaly_result.state}; "
                 f"its normalized distance is {anomaly_result.normalized_distance:.2f}, "
-                "within the limit 1.00, so this capture is normal."
+                f"within the limit {self.anomaly.threshold:.2f}, so this capture is normal."
             )
 
         processing_ms = (time.perf_counter() - started) * 1000.0
@@ -234,12 +240,15 @@ class ThreatClassifier:
                 ),
                 DecisionStep(
                     name="Nearest-state anomaly",
-                    expression="distance / state limit > 1.0",
+                    expression="distance / state limit > threshold",
                     actual_values={
                         "distance": anomaly_result.distance,
                         "normalized_distance": anomaly_result.normalized_distance,
                     },
-                    thresholds={"state_limit": state_limits[anomaly_result.state]},
+                    thresholds={
+                        "state_limit": state_limits[anomaly_result.state],
+                        "threshold": self.anomaly.threshold,
+                    },
                     passed=anomaly_result.abnormal,
                 ),
             ),

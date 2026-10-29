@@ -90,13 +90,13 @@ Reference metadata is joined only after classification; expected and actual valu
 
 ## Latency
 
-- classify() mean: 0.0185 ms
-- classify() p95: 0.0356 ms
-- timed loop mean: 0.0262 ms per record
+- classify() mean: 0.0156 ms
+- classify() p95: 0.0212 ms
+- timed loop mean: 0.0283 ms per record
 - NFR01 classify p95 under 50 ms: True
 
 ## Decision and limits
 
 The retired four-feature path is not used. R1 identifies a strong narrowband measurement; otherwise the nearest-state anomaly score decides between unknown anomaly and normal.
 
-This evidence comes from one session and one legitimate device. The measured class margins are wide and may not transfer to other radios or environments. R1 could flag a narrowband legitimate device and may miss a wideband jammer. Severity cut-offs are uncalibrated placeholders.
+This evidence comes from one session and one legitimate device. The measured class margins are wide and may not transfer to other radios or environments. R1 could flag a narrowband legitimate device and may miss a wideband jammer. Severity cut-offs are the 33rd/66th percentiles of calibration-half jamming magnitudes, so with 48 captures from one session they are coarse.

@@ -153,7 +153,11 @@ def load_signal(path: str | Path) -> Signal:
         payload = json.loads(source.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid JSON in {source}: {exc.msg}") from exc
+    return parse_signal(payload)
 
+
+def parse_signal(payload: Any) -> Signal:
+    """Strictly validate one decoded Module 1 record in the exchange shape."""
     root = _require_mapping(payload, "signal")
     _reject_forbidden_keys(root)
     _require_exact_fields(root, _TOP_LEVEL_FIELDS, "signal")

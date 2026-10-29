@@ -20,8 +20,9 @@ class AnomalyResult:
 
 
 class AnomalyEngine:
-    def __init__(self, baseline: Baseline) -> None:
+    def __init__(self, baseline: Baseline, threshold: float = 1.0) -> None:
         self.baseline = baseline
+        self.threshold = threshold
 
     def evaluate(self, signal: Signal) -> AnomalyResult:
         state, distance, deviations = self.baseline.nearest(signal)
@@ -31,7 +32,8 @@ class AnomalyEngine:
             feature for feature in ranked if deviations[feature] > state.anomaly_limit
         )
         evidence = ()
-        if normalized > 1.0:
+        abnormal = normalized > self.threshold
+        if abnormal:
             named = abnormal_features or tuple(ranked[:3])
             evidence = tuple(
                 f"{feature} distance {deviations[feature]:.2f} from {state.name} "
@@ -39,7 +41,7 @@ class AnomalyEngine:
                 for feature in named
             )
         return AnomalyResult(
-            abnormal=normalized > 1.0,
+            abnormal=abnormal,
             state=state.name,
             distance=distance,
             normalized_distance=normalized,

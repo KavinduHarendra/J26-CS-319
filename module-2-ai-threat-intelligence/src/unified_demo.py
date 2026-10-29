@@ -581,7 +581,7 @@ def render_dashboard(
         f"idle limit {classifier.baseline.idle.anomaly_limit:.2f}; legit limit {classifier.baseline.legitimate.anomaly_limit:.2f}; flagged {state.path_counts['ANOMALY']}",
     )
     rules.add_row("Normal", f"count {state.path_counts['NORMAL']}")
-    rules.add_row("Severity", "cut-offs are uncalibrated placeholders")
+    rules.add_row("Severity", "magnitude percentile cut-offs (calibration-half jamming)")
     rules_panel = Panel(rules, title="Rule book")
 
     feed = Table(expand=True)
@@ -697,7 +697,7 @@ def render_dashboard(
             f"flagged {state.path_counts['ANOMALY']}",
         )
         compact_rule.add_row("Normal", str(state.path_counts["NORMAL"]))
-        compact_rule.add_row("Severity", "uncalibrated placeholders")
+        compact_rule.add_row("Severity", "percentile-calibrated")
 
         compact_distances = Table(expand=True, box=None, padding=(0, 1))
         compact_distances.add_column("Feature", overflow="fold")
