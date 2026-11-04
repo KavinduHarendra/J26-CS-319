@@ -7,6 +7,7 @@ evaluation protocol; it is never copied into a runtime signal.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import statistics
@@ -19,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.baseline import Baseline
+from src.baseline import BASELINE_FEATURES, SPREAD_FLOORS, Baseline, calibrate_state
 from src.real_data import Signal, load_stream
 from src.scoring_data import load_ground_truth
 
@@ -27,21 +28,13 @@ from src.scoring_data import load_ground_truth
 DATA_ROOT = ROOT / "data" / "real" / "module1_signals_clean"
 OUTPUT_PATH = ROOT / "config" / "thresholds_real.json"
 CALIBRATION_DATE = "2026-10-25"
-FEATURES = (
-    "peak_db",
-    "snr_db",
-    "band_power_dbfs",
-    "occupied_bw_khz",
-    "spectral_flatness",
-)
-SPREAD_FLOORS = {
-    "peak_db": 0.5,
-    "snr_db": 0.5,
-    "band_power_dbfs": 0.5,
-    "occupied_bw_khz": 5.0,
-    "spectral_flatness": 0.01,
-}
+FEATURES = BASELINE_FEATURES
 GROUPS = ("idle", "legit_ook", "CARRIER", "PULSED_50_50")
+# Off for the 2026-10-23 RTL-SDR recording: its 0.1-step rounding and constant
+# idle features fail Shapiro-Wilk for measurement reasons, and screening would
+# roughly double the legit anomaly limit (4.98 -> 9.21).  Re-evaluate with
+# --normality-screen when recalibrating from HackRF One recordings.
+NORMALITY_SCREEN = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,35 +77,38 @@ def split_known_signals(
     return TimeSplit(calibration=calibration, validation=validation)
 
 
-def _state(values: tuple[Signal, ...], name: str, provenance: dict[str, str]) -> dict:
-    means = {
-        feature: statistics.fmean(getattr(signal, feature) for signal in values)
-        for feature in FEATURES
-    }
-    spreads = {
-        feature: max(
-            statistics.pstdev(getattr(signal, feature) for signal in values),
-            SPREAD_FLOORS[feature],
-        )
-        for feature in FEATURES
-    }
-    distances = [
-        max(
-            abs(getattr(signal, feature) - means[feature]) / spreads[feature]
-            for feature in FEATURES
-        )
-        for signal in values
-    ]
-    return {
+def _state(
+    values: tuple[Signal, ...], name: str, provenance: dict[str, str], normality_screen: bool
+) -> dict:
+    state = calibrate_state(values, name, normality_screen=normality_screen)
+    record = {
         "name": name,
-        "mean": means,
-        "spread": spreads,
-        "anomaly_limit": max(3.0, 1.25 * max(distances)),
+        "mean": dict(state.mean),
+        "spread": dict(state.spread),
+        "anomaly_limit": state.anomaly_limit,
         "provenance": provenance,
     }
+    if not normality_screen:
+        return record
+    return record | {
+        "median": dict(state.median),
+        "mad": dict(state.mad),
+        "method": dict(state.methods),
+        "normality": {
+            feature: {
+                "passed": result.passed,
+                "test": result.test,
+                "p_value": result.p_value,
+                "n": result.n,
+            }
+            for feature, result in state.normality.items()
+        },
+    }
 
 
-def build_configuration(data_root: Path = DATA_ROOT) -> tuple[dict, TimeSplit]:
+def build_configuration(
+    data_root: Path = DATA_ROOT, *, normality_screen: bool = NORMALITY_SCREEN
+) -> tuple[dict, TimeSplit]:
     """Return calibrated values and the auditable chronological split."""
     known_root = data_root / "known_signals"
     signals = list(load_stream(known_root))
@@ -149,8 +145,8 @@ def build_configuration(data_root: Path = DATA_ROOT) -> tuple[dict, TimeSplit]:
             "provenance": provenance,
         },
         "normal_states": {
-            "idle": _state(idle, "idle", provenance),
-            "legit_ook": _state(legitimate, "legit_ook", provenance),
+            "idle": _state(idle, "idle", provenance, normality_screen),
+            "legit_ook": _state(legitimate, "legit_ook", provenance, normality_screen),
         },
         "split_counts": {
             name: {
@@ -187,7 +183,14 @@ def write_configuration(configuration: dict, path: Path = OUTPUT_PATH) -> None:
 
 
 def main() -> int:
-    configuration, split = build_configuration()
+    parser = argparse.ArgumentParser(description="Calibrate config/thresholds_real.json")
+    parser.add_argument(
+        "--normality-screen",
+        action="store_true",
+        help="use a robust z-score for features that fail Shapiro-Wilk",
+    )
+    args = parser.parse_args()
+    configuration, split = build_configuration(normality_screen=args.normality_screen)
     write_configuration(configuration)
     thresholds = configuration["thresholds"]
     states = configuration["normal_states"]
