@@ -53,6 +53,7 @@ data/*.csv
 !data/real/module1_signals_clean/module1_flags_reference.csv
 !reports/real_feature_audit.csv
 data/external/
+data/synthetic/
 data/*.pkl
 data/*.npy
 data/*.npz

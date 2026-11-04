@@ -27,6 +27,7 @@ MEASUREMENT_RANGES: dict[str, tuple[float, float]] = {
     "spectral_flatness": (0.0, 1.0),
 }
 ELAPSED_S_RANGE = (0.0, 1_000_000_000.0)
+DISTANCE_M_RANGE = (0.0, 100_000.0)
 
 MEASUREMENT_FIELDS = tuple(MEASUREMENT_RANGES)
 _TOP_LEVEL_FIELDS = {
@@ -38,6 +39,8 @@ _TOP_LEVEL_FIELDS = {
     "elapsed_s",
     "measurements",
 }
+# Optional UAV-to-GCS distance; absent in older Module 1 exports.
+_OPTIONAL_TOP_LEVEL_FIELDS = {"distance_m"}
 _OBSERVATION_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _FORBIDDEN_INPUT_KEYS = {
     "la" + "bel",
@@ -62,13 +65,14 @@ def _require_exact_fields(
     value: Mapping[str, Any],
     fields: set[str] | tuple[str, ...],
     context: str,
+    optional: set[str] | frozenset[str] = frozenset(),
 ) -> None:
     expected = set(fields)
     actual = set(value)
     missing = sorted(expected - actual)
     if missing:
         raise ValueError(f"{context} is missing required field(s): {', '.join(missing)}")
-    unexpected = sorted(actual - expected)
+    unexpected = sorted(actual - expected - optional)
     if unexpected:
         raise ValueError(f"{context} has unexpected field(s): {', '.join(unexpected)}")
 
@@ -130,6 +134,7 @@ class Signal:
     band_power_dbfs: float
     occupied_bw_khz: float
     spectral_flatness: float
+    distance_m: float | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.observation_id, str) or not _OBSERVATION_ID.fullmatch(
@@ -144,6 +149,8 @@ class Signal:
         _finite_float(self.elapsed_s, "elapsed_s", ELAPSED_S_RANGE)
         for field, bounds in MEASUREMENT_RANGES.items():
             _finite_float(getattr(self, field), field, bounds)
+        if self.distance_m is not None:
+            _finite_float(self.distance_m, "distance_m", DISTANCE_M_RANGE)
 
 
 def load_signal(path: str | Path) -> Signal:
@@ -160,7 +167,7 @@ def parse_signal(payload: Any) -> Signal:
     """Strictly validate one decoded Module 1 record in the exchange shape."""
     root = _require_mapping(payload, "signal")
     _reject_forbidden_keys(root)
-    _require_exact_fields(root, _TOP_LEVEL_FIELDS, "signal")
+    _require_exact_fields(root, _TOP_LEVEL_FIELDS, "signal", _OPTIONAL_TOP_LEVEL_FIELDS)
     if root["schema_version"] != SCHEMA_VERSION:
         raise ValueError(f"schema_version must be {SCHEMA_VERSION!r}")
     if root["source_module"] != SOURCE_MODULE:
@@ -206,6 +213,11 @@ def parse_signal(payload: Any) -> Signal:
             "measurements.spectral_flatness",
             MEASUREMENT_RANGES["spectral_flatness"],
         ),
+        distance_m=(
+            _finite_float(root["distance_m"], "distance_m", DISTANCE_M_RANGE)
+            if root.get("distance_m") is not None
+            else None
+        ),
     )
 
 
@@ -243,7 +255,7 @@ def signal_to_record(signal: Signal) -> dict[str, Any]:
     """Serialize a validated signal in the Module 1 exchange shape."""
     if not isinstance(signal, Signal):
         raise TypeError("signal_to_record requires a validated Signal")
-    return {
+    record = {
         "schema_version": SCHEMA_VERSION,
         "source_module": SOURCE_MODULE,
         "observation_id": signal.observation_id,
@@ -254,3 +266,6 @@ def signal_to_record(signal: Signal) -> dict[str, Any]:
             feature: getattr(signal, feature) for feature in MEASUREMENT_FIELDS
         },
     }
+    if signal.distance_m is not None:
+        record["distance_m"] = signal.distance_m
+    return record

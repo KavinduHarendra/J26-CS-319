@@ -17,6 +17,8 @@ from src.real_data import (
     Signal,
     load_signal,
     load_stream,
+    parse_signal,
+    signal_to_record,
 )
 from src.scoring_data import load_ground_truth, load_module1_flags_reference
 
@@ -294,3 +296,23 @@ def test_ground_truth_rejects_duplicate_observation_ids(tmp_path):
 
     with pytest.raises(ValueError, match="duplicate ground truth observation_id"):
         load_ground_truth(path)
+
+
+def test_distance_m_is_optional_and_round_trips():
+    record = signal_to_record(load_signal(REAL_FOLDER / "known_signals" / "000001_S00001.json"))
+    assert "distance_m" not in record
+    assert parse_signal(record).distance_m is None
+
+    record["distance_m"] = 275.5
+    signal = parse_signal(record)
+    assert signal.distance_m == 275.5
+    assert signal_to_record(signal)["distance_m"] == 275.5
+
+
+@pytest.mark.parametrize("distance", [-1.0, "far", float("nan")])
+def test_invalid_distance_m_is_rejected(distance):
+    record = signal_to_record(load_signal(REAL_FOLDER / "known_signals" / "000001_S00001.json"))
+    record["distance_m"] = distance
+
+    with pytest.raises(ValueError, match="distance_m"):
+        parse_signal(record)
