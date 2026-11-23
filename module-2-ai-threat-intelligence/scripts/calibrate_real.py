@@ -35,6 +35,9 @@ GROUPS = ("idle", "legit_ook", "CARRIER", "PULSED_50_50")
 # roughly double the legit anomaly limit (4.98 -> 9.21).  Re-evaluate with
 # --normality-screen when recalibrating from HackRF One recordings.
 NORMALITY_SCREEN = False
+# Fuzzy risk-score (0-100) severity bands used by src/fuzzy.py: <50 LOW,
+# 50-75 MEDIUM, >=75 HIGH.  A policy choice, not fitted to data.
+FUZZY_SEVERITY = {"severity_medium_from": 50.0, "severity_high_from": 75.0}
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +142,7 @@ def build_configuration(
         "provenance": provenance,
         "features": list(FEATURES),
         "spread_floors": SPREAD_FLOORS,
+        "fuzzy": dict(FUZZY_SEVERITY),
         "thresholds": {
             "T_SNR": t_snr,
             "T_BW": t_bw,

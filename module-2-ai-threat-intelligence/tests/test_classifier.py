@@ -46,7 +46,9 @@ def test_r1_has_priority_and_jamming_severity_uses_calibrated_cutoffs(
     assert output.severity == Severity.HIGH.value
     assert output.triggered_rule == "R1"
     assert output.evidence == [
-        "snr_db 50.0 >= 25.8 and 0 < occupied_bw_khz 23.0 <= 137.5"
+        "snr_db 50.0 >= 25.8 and 0 < occupied_bw_khz 23.0 <= 137.5",
+        "fuzzy_score 80.6 (HIGH)",
+        "fuzzy F1 fired at 1.00: STRONG snr AND NARROW bw -> HIGH risk",
     ]
 
 

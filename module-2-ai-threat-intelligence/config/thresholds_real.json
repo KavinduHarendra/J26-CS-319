@@ -7,6 +7,10 @@
     "occupied_bw_khz",
     "spectral_flatness"
   ],
+  "fuzzy": {
+    "severity_high_from": 75.0,
+    "severity_medium_from": 50.0
+  },
   "normal_states": {
     "idle": {
       "anomaly_limit": 3.0,
