@@ -11,6 +11,7 @@ from typing import Mapping
 
 from src.anomaly_engine import AnomalyEngine
 from src.baseline import Baseline
+from src.fuzzy import FuzzyRiskSystem
 from src.real_data import MEASUREMENT_FIELDS, Signal
 from src.rule_engine import RuleEngine, build_rule_engine
 
@@ -103,11 +104,18 @@ class ThreatClassifier:
     """Stateless decision pipeline with percentile-calibrated severity cut-offs."""
 
     def __init__(
-        self, baseline: Baseline, rules: RuleEngine, anomaly: AnomalyEngine | None = None
+        self,
+        baseline: Baseline,
+        rules: RuleEngine,
+        anomaly: AnomalyEngine | None = None,
+        fuzzy: FuzzyRiskSystem | None = None,
     ) -> None:
         self.baseline = baseline
         self.rules = rules
         self.anomaly = anomaly if anomaly is not None else AnomalyEngine(baseline)
+        # Optional because its severity cut-offs live in the config file;
+        # from_config always supplies it.
+        self.fuzzy = fuzzy
 
     @classmethod
     def from_config(cls, path: str | Path = DEFAULT_CONFIG_PATH) -> "ThreatClassifier":
@@ -119,6 +127,7 @@ class ThreatClassifier:
         return cls(
             baseline,
             build_rule_engine(float(thresholds["T_SNR"]), float(thresholds["T_BW"])),
+            fuzzy=FuzzyRiskSystem.from_config(payload),
         )
 
     @staticmethod
@@ -195,6 +204,9 @@ class ThreatClassifier:
                 f"its normalized distance is {anomaly_result.normalized_distance:.2f}, "
                 f"within the limit {self.anomaly.threshold:.2f}, so this capture is normal."
             )
+
+        if self.fuzzy is not None:
+            evidence += self.fuzzy.evaluate(signal.snr_db, signal.occupied_bw_khz).evidence()
 
         processing_ms = (time.perf_counter() - started) * 1000.0
         output = ThreatOutput(

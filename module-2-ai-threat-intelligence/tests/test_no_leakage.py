@@ -129,7 +129,7 @@ def test_classifier_is_stateless_and_future_order_cannot_change_earlier_outputs(
     after = [signature(signal, engine) for signal in earlier]
 
     assert before == after
-    assert set(engine.__dict__) == {"baseline", "rules", "anomaly"}
+    assert set(engine.__dict__) == {"baseline", "rules", "anomaly", "fuzzy"}
 
 
 def test_leakage_guard_rejects_label_key(tmp_path: Path):

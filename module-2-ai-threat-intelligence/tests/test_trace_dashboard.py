@@ -78,7 +78,9 @@ def test_trace_values_match_evidence_and_configuration(signals_and_truth):
     }
     assert output.evidence == [
         f"snr_db {signal.snr_db:.1f} >= {r1.thresholds['T_SNR']:.1f} and "
-        f"0 < occupied_bw_khz {signal.occupied_bw_khz:.1f} <= {r1.thresholds['T_BW']:.1f}"
+        f"0 < occupied_bw_khz {signal.occupied_bw_khz:.1f} <= {r1.thresholds['T_BW']:.1f}",
+        "fuzzy_score 80.6 (HIGH)",
+        "fuzzy F1 fired at 1.00: STRONG snr AND NARROW bw -> HIGH risk",
     ]
     assert trace.per_state_distances[trace.nearest_state] == output.statistical_deviation
 

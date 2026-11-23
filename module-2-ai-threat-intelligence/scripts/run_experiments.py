@@ -22,6 +22,7 @@ from src.anomaly_engine import AnomalyEngine
 from src.baseline import Baseline
 from src.classifier import ThreatClassifier
 from src.experiments import label_and_run
+from src.fuzzy import FuzzyRiskSystem
 from src.real_data import Signal, load_stream
 from src.rule_engine import build_rule_engine
 
@@ -56,11 +57,12 @@ def build_configurations(configuration: dict) -> dict[str, ThreatClassifier]:
     baseline = Baseline.from_config(configuration)
     thresholds = configuration["thresholds"]
     rules = build_rule_engine(float(thresholds["T_SNR"]), float(thresholds["T_BW"]))
+    fuzzy = FuzzyRiskSystem.from_config(configuration)
     return {
         "rulebase_only": ThreatClassifier(
-            baseline, rules, AnomalyEngine(baseline, threshold=DISABLED_THRESHOLD)
+            baseline, rules, AnomalyEngine(baseline, threshold=DISABLED_THRESHOLD), fuzzy
         ),
-        "combined": ThreatClassifier(baseline, rules),
+        "combined": ThreatClassifier(baseline, rules, fuzzy=fuzzy),
     }
 
 

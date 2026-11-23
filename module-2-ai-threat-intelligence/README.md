@@ -1,76 +1,45 @@
-# Module 2 — Threat Intelligence
+# Module 2 — AI Threat Intelligence
 
-Module 2 reads recorded measurements from Module 1 and produces an explainable threat state for every capture. Runtime decisions use only these seven measurements:
+Module 2 classifies each RF capture from Module 1 (SDR detection) as `NORMAL`,
+`JAMMING` or `UNKNOWN_ANOMALY`, with a severity and a plain-English decision
+trace, and passes the result to Module 3 (secure communication) and Module 4
+(cyber defence and response).
 
-- `peak_freq_mhz`
-- `peak_db`
-- `noise_db`
-- `snr_db`
-- `band_power_dbfs`
-- `occupied_bw_khz`
-- `spectral_flatness`
+Decisions use only seven measurements: `peak_freq_mhz`, `peak_db`, `noise_db`,
+`snr_db`, `band_power_dbfs`, `occupied_bw_khz` and `spectral_flatness`. Capture
+labels, phases, jammer names, folder names and Module 1 flags never reach the
+classifier; leakage tests enforce this.
 
-Capture labels, phases, jammer names, folder names, and Module 1 flags are excluded from the classification path. Reference data is loaded separately after classification for calibration splits, scoring, and dashboard display.
-
-## Data
-
-Module 2 watches one flat runtime input folder:
+## Architecture
 
 ```text
-data/module1_input/
+Module 1 JSON ─► baseline ─► rule engine ─► anomaly engine ─► classifier ─► JSON files / HTTP API
 ```
 
-Put every new Module 1 capture JSON directly in this folder. Do not create a
-subfolder for each signal type. The dashboard notices files added while it is
-running, validates them, classifies them in sequence order, and writes one
-result for Module 3 and one for Module 4. Use a new sequence number and file
-name for every capture. A file not present in the recorded ground-truth table
-is still classified; the dashboard marks its expected result as `UNSCORED`.
+| Stage | File | Role |
+| --- | --- | --- |
+| Baseline | `src/baseline.py` | Two normal states (idle, legitimate OOK link) calibrated from real captures |
+| Rule engine | `src/rule_engine.py` | R1: `snr_db >= 25.8` and `0 < occupied_bw_khz <= 137.5` → `JAMMING` |
+| Anomaly engine | `src/anomaly_engine.py` | Distance to the nearest normal state; above its limit → `UNKNOWN_ANOMALY` |
+| Classifier | `src/classifier.py` | Rule, then anomaly, then `NORMAL`; adds severity and trace |
+| Outputs | `src/output_writer.py`, `src/api.py` | Atomic JSON per capture for Modules 3 and 4; `POST /classify` |
 
-The supplied 2026-10-23 reference recording remains under
-`data/real/module1_signals_clean/`:
+Severity uses the distance to the nearest normal state: LOW below 9.4135,
+MEDIUM from 9.4135, HIGH from 16.0383.
 
-| Folder | Captures | Purpose |
-|---|---:|---|
-| `known_signals/` | 1,416 | chronological calibration and validation |
-| `abnormal_signals/` | 93 | unseen abnormal evaluation |
-| `ambiguous_signals/` | 4 | transition rows reported separately |
+`src/fuzzy.py` adds a Mamdani fuzzy risk score (0-100) over `snr_db` and
+`occupied_bw_khz`, with 3 rules and membership breakpoints taken from the
+calibrated config. Every output's `evidence` ends with the score, its severity
+(<50 LOW, 50-75 MEDIUM, >=75 HIGH; cut-offs in the config's `fuzzy` section)
+and the fuzzy rules that fired. It does not change the classification or the
+`severity` field.
 
-The three folders form one stream ordered by `sequence_number` from 1 through 1,513. `ground_truth.csv` is for calibration grouping and scoring only. `module1_flags_reference.csv` is for offline reporting only.
+Thresholds live in `config/thresholds_real.json`, produced by
+`scripts/calibrate_real.py` from the first chronological half of the
+2026-10-23 recording in `data/real/module1_signals_clean/`. The second half and
+93 unseen jammer captures are kept for evaluation.
 
-## Detection pipeline
-
-Run the reproducible calibration:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\calibrate_real.py
-```
-
-This writes `config/thresholds_real.json`. Calibration reads `known_signals/` only and takes the first chronological half of each allowed group. The active values are:
-
-- signal SNR threshold: 25.8 dB
-- narrowband threshold: 137.5 kHz
-- idle anomaly limit: 3.00
-- legitimate OOK anomaly limit: 4.98
-
-The classifier has one rule. R1 returns `JAMMING` when `snr_db >= 25.8` and `0 < occupied_bw_khz <= 137.5`. If R1 does not fire, the record is compared with the nearest idle or legitimate-transmission state. A normalised distance above 1 returns `UNKNOWN_ANOMALY`; otherwise it returns `NORMAL`.
-
-The decision order is rule, anomaly, then normal. Severity uses one magnitude for both threat paths: the max |x - mean| / spread distance to the nearest normal state. LOW is below 9.4135, MEDIUM is from 9.4135, HIGH is from 16.0383. These are the 33rd/66th percentiles of calibration-half CARRIER + PULSED_50_50 jamming (see `scripts/calibrate_real.py:severity_cutoffs`).
-
-## JSON output
-
-Every capture produces a separate atomic JSON file for each recipient:
-
-```text
-data/json_out/module2_to_module3/<sequence>_<observation_id>_threat.json
-data/json_out/module2_to_module4/<sequence>_<observation_id>_threat.json
-```
-
-The sequence is six digits and the observation ID is restricted to ASCII letters, digits, underscores, and hyphens. A temporary file is replaced atomically so readers do not see partial JSON. Duplicate sequence numbers are not processed twice.
-
-## Dashboard
-
-Create the environment and install the pinned dependencies:
+## Install
 
 ```powershell
 python -m venv .venv
@@ -78,120 +47,75 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-Run the live dashboard and keep watching the input folder:
+All commands below are run from this folder.
+
+## Tests
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+Add `-m "not slow"` to skip the full-recording leakage proofs for a quicker run.
+
+## Demo
 
 ```powershell
 .\.venv\Scripts\python.exe demo.py
 ```
 
-The dashboard first scans every JSON already in `data/module1_input/`, then
-keeps watching for new captures until you press `q` or `Ctrl+C`. It shows the
-raw capture, decision trace, distances to both normal states, data flow, rule
-counts, scoring (when a reference exists), latency, and timelines. On Windows,
-use space to pause, `+` or `-` to change speed, `j` to switch JSON detail, `s`
-to save a snapshot, and `q` to quit.
-
-Useful options:
+The live dashboard classifies every capture JSON in `data/module1_input/` and
+keeps watching for new ones until `q` or `Ctrl+C`. Results are written to
+`data/json_out/module2_to_module3/` and `data/json_out/module2_to_module4/`.
+For a short non-interactive run:
 
 ```powershell
-# Watch a different flat Module 1 input folder
-.\.venv\Scripts\python.exe demo.py --input-dir E:\Module1\captures
-
-# Process 40 captures and stop (useful for a quick check)
-.\.venv\Scripts\python.exe demo.py --plain --no-tests --count 40 --speed 0
-
-# Keep output files from an earlier run
-.\.venv\Scripts\python.exe demo.py --keep
-
-# Process 150 captures with a 0.05-second delay, then stop
-.\.venv\Scripts\python.exe demo.py --count 150 --speed 0.05
-
-# Force the wide layout and show complete input/output JSON
-.\.venv\Scripts\python.exe demo.py --layout full --full-json
-
-# Save SVG and text snapshots at capture 84
-.\.venv\Scripts\python.exe demo.py --snapshot-at 84 --snapshot-dir reports/screenshots
-
-# Use ASCII symbols on an older terminal
-.\.venv\Scripts\python.exe demo.py --ascii
+.\.venv\Scripts\python.exe demo.py --plain --count 40 --speed 0
 ```
 
-`--speed` is the delay in seconds between captures. `--count 0` means keep
-watching continuously; a positive count stops after that many valid captures.
-`--input-dir` changes the watched flat input folder. `--layout auto` selects
-the full layout at 160 columns by 45 rows or larger and uses the compact layout
-otherwise. `--json-dir` changes the recipient output root, `--keep` preserves
-existing output files, and `--no-keys` disables Windows keyboard handling.
+See `python demo.py --help` for the other options (input folder, layout,
+snapshots).
+
+## Experiments and evaluation
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_experiments.py     # writes data/results_*.csv
+.\.venv\Scripts\python.exe scripts\compare_baselines.py   # rule base only vs combined
+.\.venv\Scripts\python.exe scripts\analyze_real_data.py   # writes reports/real_eval.md
+```
+
+`compare_baselines.py` prints a Markdown table with the classification report,
+confusion matrix, false-positive rate, mean latency and the NFR01 (< 50 ms)
+result for each configuration.
 
 ## HTTP API
-
-`src/api.py` serves one endpoint, `POST /classify`. The request body is one
-Module 1 capture in the same JSON shape as the files in `data/module1_input/`.
-The response is the classifier's `ThreatOutput` as JSON. The classifier is built
-once at startup from `config/thresholds_real.json`. Invalid input, including
-any label or phase key, is rejected with HTTP 422.
-
-Start the API from this folder:
 
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn src.api:app --reload
 ```
 
-Classify a recorded capture (use `curl.exe` in Windows PowerShell, where
-`curl` is an alias for `Invoke-WebRequest`):
+`POST /classify` takes one Module 1 capture (same JSON as the input files) and
+returns the classification as JSON; invalid input, including any label or phase
+key, gets HTTP 422. In Windows PowerShell use `curl.exe`:
 
 ```powershell
 curl.exe -X POST http://127.0.0.1:8000/classify -H "Content-Type: application/json" --data-binary "@data/real/module1_signals_clean/known_signals/000001_S00001.json"
 ```
 
-Or send the body inline (bash):
+Interactive docs: <http://127.0.0.1:8000/docs>.
 
-```bash
-curl -X POST http://127.0.0.1:8000/classify \
-  -H "Content-Type: application/json" \
-  -d '{"schema_version": "1.0", "source_module": "module1_sdr_rf_threat_detection",
-       "observation_id": "S90001", "sequence_number": 90001,
-       "timestamp": "2026-10-23T16:30:00.000", "elapsed_s": 460.0,
-       "measurements": {"peak_freq_mhz": 433.92, "peak_db": -60.0, "noise_db": -106.0,
-                        "snr_db": 46.0, "band_power_dbfs": -25.0,
-                        "occupied_bw_khz": 12.0, "spectral_flatness": 0.01}}'
-```
+## Known limitations
 
-That body is jamming-like (strong, narrow) and returns `"classification": "JAMMING"`.
-Interactive docs are at <http://127.0.0.1:8000/docs>.
-
-## Evaluation and tests
-
-Generate the real-data evaluation:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\analyze_real_data.py
-```
-
-The report is written to `reports/real_eval.md`. It includes calibration, validation, unseen-jammer results, leave-one-jammer-type-out results, label-quality rows, and measured latency.
-
-Run all checks:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip check
-.\.venv\Scripts\python.exe -m compileall -q src scripts tests demo.py
-.\.venv\Scripts\python.exe -m pytest -q
-```
-
-The leakage tests prove that changing reference labels, changing file names and folder layout, or removing the Module 1 flag reference file cannot change classification results.
-
-For a quicker local check that excludes only the full-recording leakage proofs:
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q -m "not slow"
-```
-
-The default test command above still runs every test, including the leakage proofs.
-
-For dependency and source auditing:
-
-```powershell
-python -m pip install pip-audit bandit
-pip-audit -r requirements.txt
-bandit -r src
-```
+- **Distance bands are not used by the classifier.** `src/contextual_baseline.py`
+  (`DistanceBandedBaseline`) gives each UAV distance range its own baseline so
+  long-range signal loss is not flagged, but the classifier still uses one flat
+  baseline. It is tested only on synthetic data from
+  `scripts/generate_distance_dataset.py`, because the recording has no distance
+  field.
+- **Thresholds need recalibration on better SDR data.** They come from one
+  RTL-SDR session (2026-10-23). Recalibrate with `scripts/calibrate_real.py`
+  when HackRF One recordings are available, and consider `--normality-screen`
+  (robust z-scores for non-Gaussian features), which is off by default.
+- **Severity cutoffs are provisional.** They are the 33rd/66th percentiles of
+  jamming in the calibration half of the same recording, not operationally
+  validated thresholds, and must be recomputed whenever the thresholds change
+  (a test fails until they match).
