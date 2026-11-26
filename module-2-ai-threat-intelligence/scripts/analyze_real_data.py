@@ -13,9 +13,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.calibrate_real import build_configuration, split_known_signals
+from scripts.calibrate_real import build_configuration, rule_thresholds, split_known_signals
 from src.baseline import Baseline
 from src.classifier import ThreatClassifier, build_classifier
+from src.fuzzy import FuzzyRiskSystem
 from src.real_data import Signal, load_stream
 from src.rule_engine import build_rule_engine
 from src.scoring_data import load_ground_truth
@@ -85,12 +86,14 @@ def leave_one_out(known, abnormal, truth, configuration):
     rows = []
     for held in ("CARRIER", "PULSED_50_50"):
         retained = "PULSED_50_50" if held == "CARRIER" else "CARRIER"
-        idle = split.calibration["idle"]
-        legitimate = split.calibration["legit_ook"]
-        jamming = split.calibration[retained]
-        t_snr = (max(x.snr_db for x in idle) + min(x.snr_db for x in legitimate + jamming)) / 2
-        t_bw = (max(x.occupied_bw_khz for x in jamming) + min(x.occupied_bw_khz for x in legitimate)) / 2
-        classifier = ThreatClassifier(Baseline.from_config(configuration), build_rule_engine(t_snr, t_bw))
+        t_snr, t_bw = rule_thresholds(
+            split.calibration["idle"], split.calibration["legit_ook"], split.calibration[retained]
+        )
+        classifier = ThreatClassifier(
+            Baseline.from_config(configuration),
+            build_rule_engine(t_snr, t_bw),
+            fuzzy=FuzzyRiskSystem.from_config(configuration),
+        )
         selected = [x for x in known if truth[x.observation_id]["jammer_type"] == held]
         detected = sum(x.classification != "NORMAL" for x in classify_many(classifier, selected))
         rows.append((held, retained, t_snr, t_bw, detected, len(selected)))
@@ -155,7 +158,7 @@ def write_report():
         f"- classify() p95: {p95:.4f} ms", f"- timed loop mean: {wall_ms / len(timed):.4f} ms per record",
         f"- NFR01 classify p95 under 50 ms: {p95 < 50}", "", "## Decision and limits", "",
         "The retired four-feature path is not used. R1 identifies a strong narrowband measurement; otherwise the nearest-state anomaly score decides between unknown anomaly and normal.", "",
-        "This evidence comes from one session and one legitimate device. The measured class margins are wide and may not transfer to other radios or environments. R1 could flag a narrowband legitimate device and may miss a wideband jammer. Severity cut-offs are the 33rd/66th percentiles of calibration-half jamming magnitudes, so with 48 captures from one session they are coarse.", "",
+        "This evidence comes from one session and one legitimate device. The measured class margins are wide and may not transfer to other radios or environments. R1 could flag a narrowband legitimate device and may miss a wideband jammer. Severity comes from the fuzzy risk score with policy cut-offs (50/75); every recorded threat scores in the HIGH band, so severity does not grade these captures.", "",
     ])
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text("\n".join(lines), encoding="utf-8")

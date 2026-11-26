@@ -55,4 +55,7 @@ def classify(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     classifier: ThreatClassifier = request.app.state.classifier
-    return asdict(classifier.classify(signal))
+    response = asdict(classifier.classify(signal))
+    if signal.session_id is not None:
+        response["session_id"] = signal.session_id
+    return response

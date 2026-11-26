@@ -2,6 +2,9 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from src.classifier import build_classifier
 from src.contracts import ThreatStateOut
 from src.output_writer import CaptureOutputWriter
@@ -59,3 +62,32 @@ def test_missing_sequences_and_class_counts_are_tracked(tmp_path):
     assert stats["received"] == 1
     assert stats["missing_sequence_numbers"] == [1, 2]
     assert sum(stats["class_counts"].values()) == 1
+
+
+def test_contract_carries_fuzzy_fields(tmp_path):
+    signal = load_signal(SAMPLE)
+    output = build_classifier().classify(signal)
+    writer = CaptureOutputWriter(tmp_path)
+
+    writer.write(signal, output)
+    for destination in writer.destinations.values():
+        [path] = destination.glob("*.json")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert payload["fuzzy_score"] == pytest.approx(output.fuzzy_score)
+        assert payload["fuzzy_rules_fired"] == output.fuzzy_rules_fired == ["F3"]
+
+
+def test_contract_fuzzy_fields_are_optional_and_validated(tmp_path):
+    signal = load_signal(SAMPLE)
+    writer = CaptureOutputWriter(tmp_path)
+    writer.write(signal, build_classifier().classify(signal))
+    [path] = writer.destinations["module3"].glob("*.json")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    older = {k: v for k, v in payload.items() if not k.startswith("fuzzy_")}
+    contract = ThreatStateOut.model_validate_json(json.dumps(older))
+    assert contract.fuzzy_score is None and contract.fuzzy_rules_fired is None
+
+    for bad in (-1.0, 100.5):
+        with pytest.raises(ValidationError):
+            ThreatStateOut.model_validate_json(json.dumps(payload | {"fuzzy_score": bad}))

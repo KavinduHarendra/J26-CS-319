@@ -39,6 +39,8 @@ def test_jamming_looking_observation_is_jamming(client):
     assert body["classification"] == "JAMMING"
     assert body["triggered_rule"] == "R1"
     assert body["severity"] in {"LOW", "MEDIUM", "HIGH"}
+    assert body["fuzzy_rules_fired"] == ["F1"]
+    assert body["fuzzy_score"] >= 75.0
 
 
 def test_classifier_is_built_once_at_startup(client):

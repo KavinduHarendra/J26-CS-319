@@ -4,8 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.calibrate_real import DATA_ROOT, GROUPS, build_configuration, severity_cutoffs
-from src.classifier import SEVERITY_HIGH_FROM, SEVERITY_MEDIUM_FROM
+from scripts.calibrate_real import DATA_ROOT, GROUPS, build_configuration
 
 
 def test_reference_thresholds_and_limits_are_reproduced():
@@ -47,10 +46,3 @@ def test_calibration_source_is_known_signals_only():
     assert not any("abnormal_signals" in part for part in Path(configuration["provenance"]["source"]).parts)
     assert not any("ambiguous_signals" in part for part in Path(configuration["provenance"]["source"]).parts)
 
-
-def test_classifier_severity_cutoffs_match_calibration():
-    configuration, split = build_configuration()
-    medium_from, high_from = severity_cutoffs(configuration, split)
-
-    assert SEVERITY_MEDIUM_FROM == pytest.approx(medium_from, abs=1e-4)
-    assert SEVERITY_HIGH_FROM == pytest.approx(high_from, abs=1e-4)

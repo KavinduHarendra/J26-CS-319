@@ -28,8 +28,24 @@ MEASUREMENT_RANGES: dict[str, tuple[float, float]] = {
 }
 ELAPSED_S_RANGE = (0.0, 1_000_000_000.0)
 DISTANCE_M_RANGE = (0.0, 100_000.0)
+# Optional SDR session metadata (HackRF-era exports).  Carried on Signal for
+# auditing; no decision reads these fields.
+OPTIONAL_TOP_LEVEL_RANGES: dict[str, tuple[float, float]] = {
+    "distance_m": DISTANCE_M_RANGE,
+    "center_freq_hz": (1e6, 6e9),
+    "sample_rate_hz": (0.0, math.inf),  # lower bound exclusive, see _positive
+    "gain_db": (0.0, 100.0),
+}
+# Optional extra measurements; validated and carried, not yet used by any decision.
+OPTIONAL_MEASUREMENT_RANGES: dict[str, tuple[float, float]] = {
+    "occupied_fraction": (0.0, 1.0),
+    "duty_cycle": (0.0, 1.0),
+}
+PEAK_COUNT_RANGE = (0, 1000)
+_EXCLUSIVE_MINIMUM = {"sample_rate_hz"}
 
 MEASUREMENT_FIELDS = tuple(MEASUREMENT_RANGES)
+OPTIONAL_MEASUREMENT_FIELDS = frozenset({*OPTIONAL_MEASUREMENT_RANGES, "peak_count"})
 _TOP_LEVEL_FIELDS = {
     "schema_version",
     "source_module",
@@ -39,9 +55,10 @@ _TOP_LEVEL_FIELDS = {
     "elapsed_s",
     "measurements",
 }
-# Optional UAV-to-GCS distance; absent in older Module 1 exports.
-_OPTIONAL_TOP_LEVEL_FIELDS = {"distance_m"}
+# All optional; absent in older Module 1 exports.
+_OPTIONAL_TOP_LEVEL_FIELDS = frozenset({*OPTIONAL_TOP_LEVEL_RANGES, "session_id"})
 _OBSERVATION_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_SESSION_ID = _OBSERVATION_ID
 _FORBIDDEN_INPUT_KEYS = {
     "la" + "bel",
     "ph" + "ase",
@@ -52,6 +69,10 @@ _FORBIDDEN_INPUT_KEYS = {
     "power" + "_anomaly",
     "expected" + "_class",
     "jammer" + "_type",
+    "ground" + "_truth",
+    "jammer",
+    "jammer" + "_on",
+    "event" + "_type",
 }
 
 
@@ -79,7 +100,9 @@ def _require_exact_fields(
 
 def _reject_forbidden_keys(value: Any) -> None:
     if isinstance(value, Mapping):
-        leaked = sorted(_FORBIDDEN_INPUT_KEYS & set(value))
+        leaked = sorted(
+            key for key in value if isinstance(key, str) and key.lower() in _FORBIDDEN_INPUT_KEYS
+        )
         if leaked:
             raise ValueError("signal contains forbidden metadata key(s): " + ", ".join(leaked))
         for child in value.values():
@@ -99,6 +122,42 @@ def _finite_float(value: Any, field: str, bounds: tuple[float, float]) -> float:
     if not minimum <= result <= maximum:
         raise ValueError(f"{field} must be between {minimum} and {maximum}")
     return result
+
+
+def _positive(value: Any, field: str, bounds: tuple[float, float]) -> float:
+    result = _finite_float(value, field, bounds)
+    if result <= bounds[0]:
+        raise ValueError(f"{field} must be greater than {bounds[0]}")
+    return result
+
+
+def _optional_float(value: Any, field: str, bounds: tuple[float, float]) -> float | None:
+    if value is None:
+        return None
+    if field.rsplit(".", 1)[-1] in _EXCLUSIVE_MINIMUM:
+        return _positive(value, field, bounds)
+    return _finite_float(value, field, bounds)
+
+
+def _peak_count(value: Any, field: str = "peak_count") -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field} must be an integer")
+    minimum, maximum = PEAK_COUNT_RANGE
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{field} must be between {minimum} and {maximum}")
+    return value
+
+
+def _session_id(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not _SESSION_ID.fullmatch(value):
+        raise ValueError(
+            "session_id must contain 1-64 ASCII letters, digits, underscores, or hyphens"
+        )
+    return value
 
 
 def _positive_sequence(value: Any) -> int:
@@ -135,6 +194,13 @@ class Signal:
     occupied_bw_khz: float
     spectral_flatness: float
     distance_m: float | None = None
+    session_id: str | None = None
+    center_freq_hz: float | None = None
+    sample_rate_hz: float | None = None
+    gain_db: float | None = None
+    occupied_fraction: float | None = None
+    peak_count: int | None = None
+    duty_cycle: float | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.observation_id, str) or not _OBSERVATION_ID.fullmatch(
@@ -149,8 +215,10 @@ class Signal:
         _finite_float(self.elapsed_s, "elapsed_s", ELAPSED_S_RANGE)
         for field, bounds in MEASUREMENT_RANGES.items():
             _finite_float(getattr(self, field), field, bounds)
-        if self.distance_m is not None:
-            _finite_float(self.distance_m, "distance_m", DISTANCE_M_RANGE)
+        for field, bounds in (OPTIONAL_TOP_LEVEL_RANGES | OPTIONAL_MEASUREMENT_RANGES).items():
+            _optional_float(getattr(self, field), field, bounds)
+        _peak_count(self.peak_count)
+        _session_id(self.session_id)
 
 
 def load_signal(path: str | Path) -> Signal:
@@ -174,7 +242,9 @@ def parse_signal(payload: Any) -> Signal:
         raise ValueError(f"source_module must be {SOURCE_MODULE!r}")
 
     measurements = _require_mapping(root["measurements"], "measurements")
-    _require_exact_fields(measurements, MEASUREMENT_FIELDS, "measurements")
+    _require_exact_fields(
+        measurements, MEASUREMENT_FIELDS, "measurements", OPTIONAL_MEASUREMENT_FIELDS
+    )
 
     observation_id = root["observation_id"]
     if not isinstance(observation_id, str):
@@ -213,11 +283,16 @@ def parse_signal(payload: Any) -> Signal:
             "measurements.spectral_flatness",
             MEASUREMENT_RANGES["spectral_flatness"],
         ),
-        distance_m=(
-            _finite_float(root["distance_m"], "distance_m", DISTANCE_M_RANGE)
-            if root.get("distance_m") is not None
-            else None
-        ),
+        session_id=_session_id(root.get("session_id")),
+        **{
+            field: _optional_float(root.get(field), field, bounds)
+            for field, bounds in OPTIONAL_TOP_LEVEL_RANGES.items()
+        },
+        **{
+            field: _optional_float(measurements.get(field), f"measurements.{field}", bounds)
+            for field, bounds in OPTIONAL_MEASUREMENT_RANGES.items()
+        },
+        peak_count=_peak_count(measurements.get("peak_count"), "measurements.peak_count"),
     )
 
 
@@ -266,6 +341,10 @@ def signal_to_record(signal: Signal) -> dict[str, Any]:
             feature: getattr(signal, feature) for feature in MEASUREMENT_FIELDS
         },
     }
-    if signal.distance_m is not None:
-        record["distance_m"] = signal.distance_m
+    for field in ("session_id", *OPTIONAL_TOP_LEVEL_RANGES):
+        if getattr(signal, field) is not None:
+            record[field] = getattr(signal, field)
+    for field in (*OPTIONAL_MEASUREMENT_RANGES, "peak_count"):
+        if getattr(signal, field) is not None:
+            record["measurements"][field] = getattr(signal, field)
     return record
