@@ -23,7 +23,10 @@ def test_label_and_run_returns_label_prediction_and_latency():
 def test_high_threshold_disables_anomaly_path():
     combined = build_classifier()
     rule_only = ThreatClassifier(
-        combined.baseline, combined.rules, AnomalyEngine(combined.baseline, threshold=999.0)
+        combined.baseline,
+        combined.rules,
+        AnomalyEngine(combined.baseline, threshold=999.0),
+        fuzzy=combined.fuzzy,
     )
     deviated = replace(load_signal(SAMPLE), spectral_flatness=0.2)
 

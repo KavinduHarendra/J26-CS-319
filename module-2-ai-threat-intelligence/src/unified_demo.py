@@ -133,7 +133,7 @@ class DashboardState:
                 elapsed_s=signal.elapsed_s,
                 classification=output.classification,
                 rule=output.triggered_rule or "-",
-                severity=output.severity or "-",
+                severity=_severity_label(output, short=True),
                 snr_db=signal.snr_db,
                 occupied_bw_khz=signal.occupied_bw_khz,
                 spectral_flatness=signal.spectral_flatness,
@@ -355,6 +355,21 @@ def print_summary(summary: dict[str, Any]) -> None:
     )
 
 
+def _severity_label(output: ThreatOutput, *, short: bool = False) -> str:
+    if output.severity is None:
+        return "-" if short else "NONE"
+    if output.fuzzy_score is None:
+        return output.severity
+    if short:
+        return f"{output.severity} {output.fuzzy_score:.0f}"
+    return f"{output.severity} (fuzzy {output.fuzzy_score:.1f})"
+
+
+def _severity_rule(classifier: ThreatClassifier) -> str:
+    medium, high = classifier.fuzzy.medium_from, classifier.fuzzy.high_from
+    return f"fuzzy score <{medium:g} LOW, {medium:g}-{high:g} MEDIUM, >={high:g} HIGH"
+
+
 def _status(value: bool | None, ascii_mode: bool) -> str:
     if value is None:
         return "--"
@@ -450,7 +465,7 @@ def render_dashboard(
         else ("WAITING" if waiting else "REJECTED")
     )
     current_severity = (
-        state.latest.processed.output.severity or "NONE" if state.latest else "NONE"
+        _severity_label(state.latest.processed.output) if state.latest else "NONE"
     )
     current_rule = (
         state.latest.processed.output.triggered_rule or "NONE"
@@ -536,7 +551,9 @@ def render_dashboard(
         outgoing_payload: Mapping[str, Any] = {"classification": display_status, "evidence": [trace.plain_english]}
     elif full_json:
         incoming_payload = signal_to_record(signal)
-        outgoing_payload = to_contract(output, recipient="module3").model_dump(mode="json")
+        outgoing_payload = to_contract(
+            output, recipient="module3", session_id=signal.session_id
+        ).model_dump(mode="json")
     else:
         incoming_payload = {
             "observation_id": signal.observation_id,
@@ -547,6 +564,8 @@ def render_dashboard(
         outgoing_payload = {
             "classification": output.classification,
             "severity": output.severity,
+            "fuzzy_score": output.fuzzy_score,
+            "fuzzy_rules_fired": output.fuzzy_rules_fired,
             "triggered_rule": output.triggered_rule,
             "abnormal_features": output.abnormal_features,
             "statistical_deviation": {
@@ -581,7 +600,7 @@ def render_dashboard(
         f"idle limit {classifier.baseline.idle.anomaly_limit:.2f}; legit limit {classifier.baseline.legitimate.anomaly_limit:.2f}; flagged {state.path_counts['ANOMALY']}",
     )
     rules.add_row("Normal", f"count {state.path_counts['NORMAL']}")
-    rules.add_row("Severity", "magnitude percentile cut-offs (calibration-half jamming)")
+    rules.add_row("Severity", _severity_rule(classifier))
     rules_panel = Panel(rules, title="Rule book")
 
     feed = Table(expand=True)
@@ -697,7 +716,7 @@ def render_dashboard(
             f"flagged {state.path_counts['ANOMALY']}",
         )
         compact_rule.add_row("Normal", str(state.path_counts["NORMAL"]))
-        compact_rule.add_row("Severity", "percentile-calibrated")
+        compact_rule.add_row("Severity", _severity_rule(classifier))
 
         compact_distances = Table(expand=True, box=None, padding=(0, 1))
         compact_distances.add_column("Feature", overflow="fold")
@@ -725,7 +744,7 @@ def render_dashboard(
             )
             compact_io.add_row(
                 "Output",
-                f"{output.classification} | severity {output.severity or '-'} | "
+                f"{output.classification} | severity {_severity_label(output, short=True)} | "
                 f"rule {output.triggered_rule or '-'}",
             )
             compact_io.add_row(

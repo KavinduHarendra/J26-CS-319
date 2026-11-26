@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import math
+from functools import lru_cache
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -156,6 +157,20 @@ class FuzzyRiskSystem:
             return "MEDIUM"
         return "LOW"
 
+    @lru_cache(maxsize=1024)  # recorded captures repeat a few firing patterns
+    def _centroid(self, clipped: tuple[tuple[str, float], ...]) -> float:
+        numerator = denominator = 0.0
+        step = (RISK_MAX - RISK_MIN) / CENTROID_STEPS
+        for index in range(CENTROID_STEPS + 1):
+            x = RISK_MIN + index * step
+            membership = max(
+                (min(strength, self.risk_sets[name](x)) for name, strength in clipped),
+                default=0.0,
+            )
+            numerator += x * membership
+            denominator += membership
+        return numerator / denominator if denominator > 0.0 else RISK_MIN
+
     def evaluate(self, snr_db: float, occupied_bw_khz: float) -> FuzzyResult:
         fired = []
         for rule in RULES:
@@ -165,17 +180,7 @@ class FuzzyRiskSystem:
             if strength > 0.0:
                 fired.append((rule, strength))
 
-        numerator = denominator = 0.0
-        step = (RISK_MAX - RISK_MIN) / CENTROID_STEPS
-        for index in range(CENTROID_STEPS + 1):
-            x = RISK_MIN + index * step
-            membership = max(
-                (min(strength, self.risk_sets[rule.risk_set](x)) for rule, strength in fired),
-                default=0.0,
-            )
-            numerator += x * membership
-            denominator += membership
-        score = numerator / denominator if denominator > 0.0 else RISK_MIN
+        score = self._centroid(tuple((rule.risk_set, strength) for rule, strength in fired))
 
         return FuzzyResult(
             score=score,

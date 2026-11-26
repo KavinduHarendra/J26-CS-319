@@ -71,7 +71,10 @@ class CaptureOutputWriter:
         for recipient, destination in self.destinations.items():
             path = destination / name
             if not path.exists():
-                write_json_atomic(path, to_contract(output, recipient=recipient))
+                write_json_atomic(
+                    path,
+                    to_contract(output, recipient=recipient, session_id=signal.session_id),
+                )
                 self._files_written[recipient] += 1
                 self._last_file_name[recipient] = name
                 self._last_write_time[recipient] = time.monotonic()

@@ -4,14 +4,11 @@ from pathlib import Path
 import pytest
 
 from src.classifier import (
-    SEVERITY_HIGH_FROM,
-    SEVERITY_MEDIUM_FROM,
     Classification,
     Severity,
-    ThreatClassifier,
     build_classifier,
 )
-from src.real_data import Signal, load_signal
+from src.real_data import Signal, load_signal, load_stream
 
 
 SAMPLE = Path("data/real/module1_signals_clean/known_signals/000001_S00001.json")
@@ -86,14 +83,47 @@ def test_signal_constructor_rejects_nan(normal_signal):
         replace(normal_signal, snr_db=float("nan"))
 
 
-@pytest.mark.parametrize(
-    ("magnitude", "expected"),
-    [
-        (SEVERITY_MEDIUM_FROM - 0.01, Severity.LOW),
-        (SEVERITY_MEDIUM_FROM, Severity.MEDIUM),
-        (SEVERITY_HIGH_FROM - 0.01, Severity.MEDIUM),
-        (SEVERITY_HIGH_FROM, Severity.HIGH),
-    ],
-)
-def test_severity_boundaries_follow_calibrated_cutoffs(magnitude, expected):
-    assert ThreatClassifier._severity(magnitude) is expected
+def test_threat_severity_is_the_fuzzy_severity(classifier, normal_signal):
+    jamming = classifier.classify(replace(normal_signal, snr_db=50.0, occupied_bw_khz=23.0))
+    anomaly = classifier.classify(replace(normal_signal, peak_db=-20.0))
+
+    for output in (jamming, anomaly):
+        assert output.fuzzy_score is not None
+        assert output.severity == classifier.fuzzy.severity(output.fuzzy_score)
+    assert jamming.fuzzy_rules_fired == ["F1"]
+
+
+def test_anomaly_between_narrow_and_wide_gets_graded_fuzzy_severity(classifier, normal_signal):
+    # Strong signal whose bandwidth is on the NARROW/WIDE ramp: R1 does not fire,
+    # both F1 and F2 fire partially, and the old magnitude cut-offs are not used.
+    output = classifier.classify(replace(normal_signal, snr_db=50.0, occupied_bw_khz=160.0))
+
+    assert output.classification == Classification.UNKNOWN_ANOMALY.value
+    assert output.fuzzy_rules_fired == ["F1", "F2"]
+    assert classifier.fuzzy.medium_from <= output.fuzzy_score < classifier.fuzzy.high_from
+    assert output.severity == Severity.MEDIUM.value
+
+
+def test_normal_keeps_null_severity_but_reports_fuzzy_fields(classifier, normal_signal):
+    output = classifier.classify(normal_signal)
+
+    assert output.classification == Classification.NORMAL.value
+    assert output.severity is None
+    assert output.fuzzy_score is not None and output.fuzzy_score < classifier.fuzzy.medium_from
+    assert output.fuzzy_rules_fired == ["F3"]
+
+
+@pytest.mark.slow
+def test_severity_and_fuzzy_evidence_agree_on_every_recorded_capture(classifier):
+    outputs = [
+        classifier.classify(signal)
+        for signal in load_stream(Path("data/real/module1_signals_clean"))
+    ]
+
+    assert len(outputs) == 1513
+    for output in outputs:
+        evidence_line = next(line for line in output.evidence if line.startswith("fuzzy_score"))
+        if output.classification == Classification.NORMAL.value:
+            assert output.severity is None
+        else:
+            assert evidence_line.endswith(f"({output.severity})")

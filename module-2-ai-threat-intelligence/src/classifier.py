@@ -18,18 +18,6 @@ from src.rule_engine import RuleEngine, build_rule_engine
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "thresholds_real.json"
 
-# Severity cut-offs on threat magnitude: the max |x - mean| / spread distance to
-# the nearest normal state (Baseline.nearest).  Derived 2026-10-29 from the
-# percentile distribution of experimental Jamming magnitudes: the 33rd and 66th
-# percentiles (bottom third LOW, middle MEDIUM, top HIGH) over the first
-# chronological half of CARRIER + PULSED_50_50 captures (n=48) in
-# data/real/module1_signals_clean/known_signals, recorded 2026-10-23
-# (dataset_20261023_162220.csv).  Reproduce with
-# scripts/calibrate_real.py:severity_cutoffs(); tests/test_calibrate_real.py
-# fails if these constants drift from that computation.
-SEVERITY_MEDIUM_FROM = 9.4135
-SEVERITY_HIGH_FROM = 16.0383
-
 
 class Classification(str, Enum):
     NORMAL = "NORMAL"
@@ -58,6 +46,8 @@ class ThreatOutput:
     evidence: list[str]
     baseline_version: str
     processing_ms: float = field(compare=False)
+    fuzzy_score: float | None = None
+    fuzzy_rules_fired: list[str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,20 +91,20 @@ class DecisionTrace:
 
 
 class ThreatClassifier:
-    """Stateless decision pipeline with percentile-calibrated severity cut-offs."""
+    """Stateless decision pipeline; threat severity comes from the fuzzy risk score."""
 
     def __init__(
         self,
         baseline: Baseline,
         rules: RuleEngine,
         anomaly: AnomalyEngine | None = None,
-        fuzzy: FuzzyRiskSystem | None = None,
+        *,
+        fuzzy: FuzzyRiskSystem,
     ) -> None:
         self.baseline = baseline
         self.rules = rules
         self.anomaly = anomaly if anomaly is not None else AnomalyEngine(baseline)
-        # Optional because its severity cut-offs live in the config file;
-        # from_config always supplies it.
+        # Single source of severity for JAMMING and UNKNOWN_ANOMALY.
         self.fuzzy = fuzzy
 
     @classmethod
@@ -130,14 +120,6 @@ class ThreatClassifier:
             fuzzy=FuzzyRiskSystem.from_config(payload),
         )
 
-    @staticmethod
-    def _severity(magnitude: float) -> Severity:
-        if magnitude >= SEVERITY_HIGH_FROM:
-            return Severity.HIGH
-        if magnitude >= SEVERITY_MEDIUM_FROM:
-            return Severity.MEDIUM
-        return Severity.LOW
-
     def classify(self, signal: Signal) -> ThreatOutput:
         output, _ = self.classify_with_trace(signal)
         return output
@@ -151,6 +133,8 @@ class ThreatClassifier:
         }
         rule_result = self.rules.evaluate(measurements)
         anomaly_result = self.anomaly.evaluate(signal)
+        fuzzy_result = self.fuzzy.evaluate(signal.snr_db, signal.occupied_bw_khz)
+        fuzzy_severity = Severity(fuzzy_result.severity)
 
         per_state_distances = {
             state.name: self.baseline.feature_distances(signal, state)
@@ -166,7 +150,7 @@ class ThreatClassifier:
 
         if rule_result.triggered_rule is not None:
             classification = Classification.JAMMING
-            severity: Severity | None = self._severity(anomaly_result.distance)
+            severity: Severity | None = fuzzy_severity
             evidence = list(rule_result.evidence)
             triggered_rule = rule_result.triggered_rule
             abnormal_features: list[str] = []
@@ -179,7 +163,7 @@ class ThreatClassifier:
             )
         elif anomaly_result.abnormal:
             classification = Classification.UNKNOWN_ANOMALY
-            severity = self._severity(anomaly_result.distance)
+            severity = fuzzy_severity
             evidence = list(anomaly_result.evidence)
             triggered_rule = None
             abnormal_features = list(anomaly_result.abnormal_features)
@@ -205,8 +189,7 @@ class ThreatClassifier:
                 f"within the limit {self.anomaly.threshold:.2f}, so this capture is normal."
             )
 
-        if self.fuzzy is not None:
-            evidence += self.fuzzy.evaluate(signal.snr_db, signal.occupied_bw_khz).evidence()
+        evidence += fuzzy_result.evidence()
 
         processing_ms = (time.perf_counter() - started) * 1000.0
         output = ThreatOutput(
@@ -223,6 +206,8 @@ class ThreatClassifier:
             evidence=evidence,
             baseline_version=self.baseline.version,
             processing_ms=processing_ms,
+            fuzzy_score=fuzzy_result.score,
+            fuzzy_rules_fired=[rule.id for rule in fuzzy_result.fired],
         )
         trace = DecisionTrace(
             steps=(
