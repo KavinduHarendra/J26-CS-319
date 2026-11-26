@@ -1,0 +1,15 @@
+{
+  "data_source": "CONTROLLED_EXPERIMENT",
+  "experiment_id": "EXP-001",
+  "observations": [
+    {
+      "module2_file": "Module_2 Output_1.json",
+      "module3_file": "Module_3 Output_1.json",
+      "session_id": "SESSION-001",
+      "scenario_id": "DEGRADED_LINK",
+      "incident_id": null,
+      "naive_timestamp_offset": null,
+      "outcome_ref": null
+    }
+  ]
+}

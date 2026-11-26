@@ -4,7 +4,9 @@ from fastapi.responses import JSONResponse
 
 # Module 4 imports
 from models.defense import EvaluateRequest
+from response_ml.modes import read_response_mode
 from services.pipeline import run_pipeline
+from services.response_selection_service import initialize_response_selection
 from services import audit_service
 from data.evaluate_scenarios import EVALUATE_SCENARIOS, ESCALATION_SEQUENCE
 from services.file_integration_service import build_request, IntegrationValidationError
@@ -37,6 +39,7 @@ async def incident_limit_handler(request, exc):
 
 @app.on_event("startup")
 def startup():
+    initialize_response_selection(read_response_mode())
     audit_service.init_db()
 
 
@@ -162,6 +165,7 @@ def get_module4_status():
         "project": "J26-CS-319",
         "status": "OPERATIONAL",
         "mode": "RECOMMENDATION_ONLY",
+        "response_selection_mode": read_response_mode().value,
         "upstream_modules": {
             "module1_sdr_rf_detection": "MOCK_ADAPTER",
             "module2_ai_threat_intelligence": "MOCK_ADAPTER",

@@ -1,0 +1,547 @@
+{
+  "experiment": "synthetic-random-forest-v1",
+  "status": "EXPERIMENTAL_SYNTHETIC_PROTOTYPE",
+  "dataset_version": "1.2",
+  "label_export_version": "1.0",
+  "rubric_version": "response-rubric-v0.1-draft",
+  "input_sha256": {
+    "source": "82716b90d864e556b52b294dfbd01cd6359033e88b34788cddcdb47d50b4cacb",
+    "labels": "fe2a51f76a79e98338e7253cad9a7f97a63279f434773897442764fc42da5b00",
+    "split_manifest": "e2939917e921a002601da3939299ad7ff15797d63c41f607ff1312a9384ede10"
+  },
+  "model_filename": "prototype-random-forest.joblib",
+  "model_sha256": "948d4a3d23e1483305a9ba6d642443e29b3afcc218917644081f4d6449cf0ad2",
+  "dependencies": {
+    "python": "3.13.5",
+    "scikit-learn": "1.9.1",
+    "joblib": "1.6.0",
+    "numpy": "2.5.5",
+    "scipy": "1.18.1",
+    "pydantic": "2.10.4"
+  },
+  "feature_columns": [
+    "classification",
+    "severity",
+    "threat_confidence",
+    "triggered_rule_present",
+    "abnormal_feature_count",
+    "link_state",
+    "freshness_state",
+    "auth_state",
+    "integrity_state",
+    "replay_detected",
+    "comm_decision",
+    "risk_score",
+    "risk_level",
+    "evidence_conflict",
+    "decision_confidence"
+  ],
+  "feature_definitions": {
+    "classification": {
+      "enum": [
+        "Normal",
+        "Jamming",
+        "Unknown Anomaly"
+      ],
+      "title": "Classification",
+      "type": "string"
+    },
+    "severity": {
+      "anyOf": [
+        {
+          "enum": [
+            "Low",
+            "Medium",
+            "High"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Severity"
+    },
+    "threat_confidence": {
+      "anyOf": [
+        {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Threat Confidence"
+    },
+    "triggered_rule_present": {
+      "title": "Triggered Rule Present",
+      "type": "boolean"
+    },
+    "abnormal_feature_count": {
+      "minimum": 0,
+      "title": "Abnormal Feature Count",
+      "type": "integer"
+    },
+    "link_state": {
+      "enum": [
+        "TRUSTED",
+        "DEGRADED",
+        "SUSPICIOUS",
+        "UNTRUSTED"
+      ],
+      "title": "Link State",
+      "type": "string"
+    },
+    "freshness_state": {
+      "enum": [
+        "FRESH",
+        "STALE",
+        "REPLAY"
+      ],
+      "title": "Freshness State",
+      "type": "string"
+    },
+    "auth_state": {
+      "enum": [
+        "VALID",
+        "SUSPICIOUS",
+        "INVALID"
+      ],
+      "title": "Auth State",
+      "type": "string"
+    },
+    "integrity_state": {
+      "enum": [
+        "VALID",
+        "SUSPICIOUS",
+        "INVALID"
+      ],
+      "title": "Integrity State",
+      "type": "string"
+    },
+    "replay_detected": {
+      "title": "Replay Detected",
+      "type": "boolean"
+    },
+    "comm_decision": {
+      "anyOf": [
+        {
+          "enum": [
+            "MAINTAIN",
+            "SWITCH",
+            "BACKUP",
+            "SECURE_HOLD"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Comm Decision"
+    },
+    "risk_score": {
+      "maximum": 100.0,
+      "minimum": 0.0,
+      "title": "Risk Score",
+      "type": "number"
+    },
+    "risk_level": {
+      "enum": [
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+        "CRITICAL"
+      ],
+      "title": "Risk Level",
+      "type": "string"
+    },
+    "evidence_conflict": {
+      "title": "Evidence Conflict",
+      "type": "boolean"
+    },
+    "decision_confidence": {
+      "enum": [
+        "HIGH",
+        "MEDIUM",
+        "LOW"
+      ],
+      "title": "Decision Confidence",
+      "type": "string"
+    }
+  },
+  "preprocessing": {
+    "numeric": [
+      "threat_confidence",
+      "triggered_rule_present",
+      "abnormal_feature_count",
+      "replay_detected",
+      "risk_score",
+      "evidence_conflict"
+    ],
+    "categorical": [
+      "classification",
+      "severity",
+      "link_state",
+      "freshness_state",
+      "auth_state",
+      "integrity_state",
+      "comm_decision",
+      "risk_level",
+      "decision_confidence"
+    ],
+    "numeric_missing": "Train median and missing indicator",
+    "categorical_missing": "__MISSING__ before one-hot encoding",
+    "unseen_categories": "One-hot handles categories absent from the training fold"
+  },
+  "class_mapping": {
+    "0": "CONTINUE_MONITORING",
+    "1": "INCREASE_MONITORING",
+    "2": "MONITOR",
+    "3": "OPERATOR_ESCALATION",
+    "4": "PREPARE_BACKUP_CHANNEL",
+    "5": "SECURE_HOLD"
+  },
+  "training": {
+    "seed": 42,
+    "n_jobs": 1,
+    "search": {
+      "class_weight": [
+        null,
+        "balanced",
+        "balanced_subsample"
+      ],
+      "max_depth": [
+        null,
+        8,
+        12
+      ],
+      "min_samples_leaf": [
+        1,
+        3
+      ],
+      "n_estimators": [
+        120
+      ]
+    },
+    "trials": [
+      {
+        "parameters": {
+          "class_weight": null,
+          "max_depth": null,
+          "min_samples_leaf": 1,
+          "n_estimators": 120
+        },
+        "macro_f1": 0.9413366855227321,
+        "balanced_accuracy": 0.9533333333333333,
+        "accuracy": 0.9363636363636364
+      },
+      {
+        "parameters": {
+          "class_weight": null,
+          "max_depth": null,
+          "min_samples_leaf": 3,
+          "n_estimators": 120
+        },
+        "macro_f1": 0.9413366855227321,
+        "balanced_accuracy": 0.9533333333333333,
+        "accuracy": 0.9363636363636364
+      },
+      {
+        "parameters": {
+          "class_weight": null,
+          "max_depth": 8,
+          "min_samples_leaf": 1,
+          "n_estimators": 120
+        },
+        "macro_f1": 0.9440835688666304,
+        "balanced_accuracy": 0.9533333333333333,
+        "accuracy": 0.9363636363636364
+      },
+      {
+        "parameters": {
+          "class_weight": null,
+          "max_depth": 8,
+          "min_samples_leaf": 3,
+          "n_estimators": 120
+        },
+        "macro_f1": 0.9440835688666304,
+        "balanced_accuracy": 0.9533333333333333,
+        "accuracy": 0.9363636363636364
+      },
+      {
+        "parameters": {
+          "class_weight": null,
+          "max_depth": 12,
+          "min_samples_leaf": 1,
+          "n_estimators": 120
+        },
+        "macro_f1": 0.9413366855227321,
+        "balanced_accuracy": 0.9533333333333333,
+        "accuracy": 0.9363636363636364
+      },
+      {
+        "parameters": {
+          "class_weight": null,
+          "max_depth": 12,
+          "min_samples_leaf": 3,
+          "n_estimators": 120
+        },
+        "macro_f1": 0.9413366855227321,
+        "balanced_accuracy": 0.9533333333333333,
+        "accuracy": 0.9363636363636364
+      },
+      {
+        "parameters": {
+          "class_weight": "balanced",
+          "max_depth": null,
+          "min_samples_leaf": 1,
+          "n_estimators": 120
+        },
+        "macro_f1": 0.9440835688666304,
+        "balanced_accuracy": 0.9533333333333333,
+        "accuracy": 0.9363636363636364
+      },
+      {
+        "parameters": {
+          "class_weight": "balanced",
+          "max_depth": null,
+          "min_samples_leaf": 3,
+          "n_estimators": 120
+        },
+        "macro_f1": 0.9413366855227321,
+        "balanced_accuracy": 0.9533333333333333,
+        "accuracy": 0.9363636363636364
+      },
+      {
+        "parameters": {
+          "class_weight": "balanced",
+          "max_depth": 8,
+          "min_samples_leaf": 1,
+          "n_estimators": 120
+        },
+        "macro_f1": 0.9459074327405381,
+        "balanced_accuracy": 0.9533333333333333,
+        "accuracy": 0.9363636363636364
+      },
+      {
+        "parameters": {
+          "class_weight": "balanced",
+          "max_depth": 8,
+          "min_samples_leaf": 3,
+          "n_estimators": 120
+        },
+        "macro_f1": 0.9413366855227321,
+        "balanced_accuracy": 0.9533333333333333,
+        "accuracy": 0.9363636363636364
+      },
+      {
+        "parameters": {
+          "class_weight": "balanced",
+          "max_depth": 12,
+          "min_samples_leaf": 1,
+          "n_estimators": 120
+        },
+        "macro_f1": 0.9440835688666304,
+        "balanced_accuracy": 0.9533333333333333,
+        "accuracy": 0.9363636363636364
+      },
+      {
+        "parameters": {
+          "class_weight": "balanced",
+          "max_depth": 12,
+          "min_samples_leaf": 3,
+          "n_estimators": 120
+        },
+        "macro_f1": 0.9413366855227321,
+        "balanced_accuracy": 0.9533333333333333,
+        "accuracy": 0.9363636363636364
+      },
+      {
+        "parameters": {
+          "class_weight": "balanced_subsample",
+          "max_depth": null,
+          "min_samples_leaf": 1,
+          "n_estimators": 120
+        },
+        "macro_f1": 0.9440835688666304,
+        "balanced_accuracy": 0.9533333333333333,
+        "accuracy": 0.9363636363636364
+      },
+      {
+        "parameters": {
+          "class_weight": "balanced_subsample",
+          "max_depth": null,
+          "min_samples_leaf": 3,
+          "n_estimators": 120
+        },
+        "macro_f1": 0.9440835688666304,
+        "balanced_accuracy": 0.9533333333333333,
+        "accuracy": 0.9363636363636364
+      },
+      {
+        "parameters": {
+          "class_weight": "balanced_subsample",
+          "max_depth": 8,
+          "min_samples_leaf": 1,
+          "n_estimators": 120
+        },
+        "macro_f1": 0.9440835688666304,
+        "balanced_accuracy": 0.9533333333333333,
+        "accuracy": 0.9363636363636364
+      },
+      {
+        "parameters": {
+          "class_weight": "balanced_subsample",
+          "max_depth": 8,
+          "min_samples_leaf": 3,
+          "n_estimators": 120
+        },
+        "macro_f1": 0.9440835688666304,
+        "balanced_accuracy": 0.9533333333333333,
+        "accuracy": 0.9363636363636364
+      },
+      {
+        "parameters": {
+          "class_weight": "balanced_subsample",
+          "max_depth": 12,
+          "min_samples_leaf": 1,
+          "n_estimators": 120
+        },
+        "macro_f1": 0.9440835688666304,
+        "balanced_accuracy": 0.9533333333333333,
+        "accuracy": 0.9363636363636364
+      },
+      {
+        "parameters": {
+          "class_weight": "balanced_subsample",
+          "max_depth": 12,
+          "min_samples_leaf": 3,
+          "n_estimators": 120
+        },
+        "macro_f1": 0.9440835688666304,
+        "balanced_accuracy": 0.9533333333333333,
+        "accuracy": 0.9363636363636364
+      }
+    ],
+    "selected": {
+      "parameters": {
+        "class_weight": "balanced",
+        "max_depth": 8,
+        "min_samples_leaf": 1,
+        "n_estimators": 120
+      },
+      "macro_f1": 0.9459074327405381,
+      "balanced_accuracy": 0.9533333333333333,
+      "accuracy": 0.9363636363636364
+    },
+    "selection": "Validation macro F1, then balanced accuracy, then accuracy, then first trial",
+    "fit_partition": "train",
+    "selection_partition": "validation",
+    "test_scored_during_selection": false,
+    "selection_seconds": 7.423238400020637
+  },
+  "partitions": {
+    "train": {
+      "rows": 560,
+      "rubric_version": "response-rubric-v0.1-draft",
+      "label_source": "RUBRIC_GENERATED",
+      "label_status": "PENDING",
+      "provisional_labels": {
+        "MONITOR": 20,
+        "CONTINUE_MONITORING": 30,
+        "INCREASE_MONITORING": 84,
+        "PREPARE_BACKUP_CHANNEL": 68,
+        "OPERATOR_ESCALATION": 288,
+        "SECURE_HOLD": 70
+      },
+      "rubric_criteria": {
+        "R02_CORROBORATED_SECURITY_FAILURE": 32,
+        "R03_SECURITY_OR_EVIDENCE_REVIEW": 288,
+        "R06_HEIGHTEN_OBSERVATION": 84,
+        "R01_CONFIRMED_REPLAY": 38,
+        "R04_VERIFIED_LINK_WITH_INTERFERENCE": 68,
+        "R08_ROUTINE_MONITORING": 20,
+        "R07_MONITOR_WITH_FOLLOWUP": 30
+      },
+      "review_flags": {
+        "conflicting_evidence": 174,
+        "low_evidence_confidence": 174,
+        "critical_contextual_monitoring": 12
+      },
+      "unsupported_cases": 0,
+      "approved_responses": 0
+    },
+    "validation": {
+      "rows": 220,
+      "rubric_version": "response-rubric-v0.1-draft",
+      "label_source": "RUBRIC_GENERATED",
+      "label_status": "PENDING",
+      "provisional_labels": {
+        "MONITOR": 40,
+        "CONTINUE_MONITORING": 20,
+        "INCREASE_MONITORING": 50,
+        "PREPARE_BACKUP_CHANNEL": 30,
+        "OPERATOR_ESCALATION": 65,
+        "SECURE_HOLD": 15
+      },
+      "rubric_criteria": {
+        "R06_HEIGHTEN_OBSERVATION": 50,
+        "R03_SECURITY_OR_EVIDENCE_REVIEW": 65,
+        "R02_CORROBORATED_SECURITY_FAILURE": 15,
+        "R04_VERIFIED_LINK_WITH_INTERFERENCE": 30,
+        "R08_ROUTINE_MONITORING": 40,
+        "R07_MONITOR_WITH_FOLLOWUP": 20
+      },
+      "review_flags": {
+        "conflicting_evidence": 60,
+        "low_evidence_confidence": 60,
+        "critical_contextual_monitoring": 0
+      },
+      "unsupported_cases": 0,
+      "approved_responses": 0
+    },
+    "test": {
+      "rows": 220,
+      "rubric_version": "response-rubric-v0.1-draft",
+      "label_source": "RUBRIC_GENERATED",
+      "label_status": "PENDING",
+      "provisional_labels": {
+        "MONITOR": 18,
+        "CONTINUE_MONITORING": 8,
+        "INCREASE_MONITORING": 42,
+        "PREPARE_BACKUP_CHANNEL": 8,
+        "OPERATOR_ESCALATION": 104,
+        "SECURE_HOLD": 40
+      },
+      "rubric_criteria": {
+        "R06_HEIGHTEN_OBSERVATION": 42,
+        "R03_SECURITY_OR_EVIDENCE_REVIEW": 104,
+        "R08_ROUTINE_MONITORING": 18,
+        "R07_MONITOR_WITH_FOLLOWUP": 8,
+        "R02_CORROBORATED_SECURITY_FAILURE": 26,
+        "R01_CONFIRMED_REPLAY": 14,
+        "R04_VERIFIED_LINK_WITH_INTERFERENCE": 8
+      },
+      "review_flags": {
+        "conflicting_evidence": 84,
+        "low_evidence_confidence": 84,
+        "critical_contextual_monitoring": 0
+      },
+      "unsupported_cases": 0,
+      "approved_responses": 0
+    }
+  },
+  "split_overlap": {
+    "exact_cross_partition_feature_vectors": 0,
+    "cross_partition_sessions": 0,
+    "cross_partition_families": 0,
+    "rows_matching_an_earlier_partition_without_threat_confidence": {
+      "train": 0,
+      "validation": 128,
+      "test": 149
+    }
+  }
+}

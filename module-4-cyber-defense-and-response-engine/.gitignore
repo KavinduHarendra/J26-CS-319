@@ -9,6 +9,9 @@ __pycache__/
 venv/
 backend/.runtime-deps-local/
 
+# Local response research data and experiment outputs
+.response-ml/
+
 # Local configuration and editor files
 .env
 .env.*

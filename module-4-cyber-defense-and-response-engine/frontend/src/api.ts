@@ -1,8 +1,13 @@
-import type { EvaluateRequest, EvaluateResponse, EvaluateScenario } from './types'
+import type { EvaluateRequest, EvaluateResponse, EvaluateScenario, IncidentDetail, Module4Status } from './types'
 
 const BASE = '/api'
 async function remote<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${BASE}${path}`, init)
+  let response: Response
+  try {
+    response = await fetch(`${BASE}${path}`, init)
+  } catch {
+    throw new Error('Unable to connect to the backend. Check that it is running, then try again.')
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => null)
     const detail = body?.detail
@@ -50,12 +55,16 @@ export async function fetchEvaluateIncidents(limit = 50): Promise<{ incidents: R
   return remote(`/evaluate/incidents?limit=${limit}`)
 }
 
+export async function fetchEvaluateIncident(id: string, signal: AbortSignal): Promise<IncidentDetail> {
+  return remote(`/evaluate/incidents/${encodeURIComponent(id)}`, { signal })
+}
+
 export async function fetchRiskHistory(): Promise<{ history: Record<string, unknown>[] }> {
   return remote('/evaluate/risk-history')
 }
 
-export async function fetchModule4Status(): Promise<Record<string, unknown>> {
-  return remote('/evaluate/status')
+export async function fetchModule4Status(signal?: AbortSignal): Promise<Module4Status> {
+  return remote('/evaluate/status', { cache: 'no-store', signal })
 }
 
 export async function resetEvaluate(): Promise<Record<string, unknown>> {

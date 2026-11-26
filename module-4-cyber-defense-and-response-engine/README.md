@@ -283,3 +283,80 @@ Manual requests must explicitly supply Module 2 classification and Module 3 link
 For timestamp fallback, both timestamps must include timezone offsets, or both must omit them. Mixed formats return `TIMESTAMP_TIMEZONE_MISMATCH`; the application does not assume a timezone. Matching observation IDs retain priority.
 
 The PP1 regression run passed 135 backend tests, TypeScript/production build, and frontend lint. HTTP checks compared all 11 scenarios through both evaluation routes against a disposable database. See [PP1_STABILIZATION_REPORT.md](PP1_STABILIZATION_REPORT.md) for demonstration results, remaining response-policy decisions, and browser-verification limitations. Scoring weights, thresholds, and response rules were not changed during stabilization.
+
+## Response ML research data
+
+The current phase prepares a labeled dataset workflow for a future Random Forest and Decision Tree comparison. The rule-based engine still supplies the recommendation. The two existing rule outputs are kept in separate CSV columns so each can be compared later.
+
+### Set up the local Python tools
+
+In this workspace, run the examples below from the project root in PowerShell with:
+
+```powershell
+$python = (Resolve-Path .\.venv\python.exe).Path
+```
+
+On a fresh checkout with a standard Python installation, create the environment from the project root:
+
+```powershell
+py -3 -m venv .venv
+$python = (Resolve-Path .\.venv\Scripts\python.exe).Path
+& $python -m pip install -r .\backend\requirements-ml.txt
+```
+
+For a standard virtual environment, run the `-m response_ml` commands from `backend` and start path arguments to project-root folders with `..\`. The bundled workspace runtime already knows the backend import path, so the examples below can run from the project root as written. The dataset tools use Python's CSV library and the same Pydantic validation used by the backend.
+
+### Generate and validate a synthetic dataset
+
+```powershell
+& $python -m response_ml generate --output .response-ml/v1.2-rerun/synthetic_dataset.csv --count 1000 --seed 42 --session-size 10
+& $python -m response_ml validate .response-ml/v1.2-rerun/synthetic_dataset.csv
+& $python -m response_ml prepare-review .response-ml/v1.2-rerun/synthetic_dataset.csv --output-dir .response-ml/v1.2-rerun/review --count 144 --seed 42
+```
+
+The seed makes the results reproducible. The v1.2 settings above produce 1,000 observations in 100 generated session groups across 18 families. The generator samples complete communication profiles and compatible RF profiles, favors variation within families, and gives less represented contextual responses priority among similarly varied cases. V1.1 remains available at `.response-ml/synthetic_dataset.csv`. The validator checks the schema, provenance, required evidence categories, duplicates, labels and computed risk/response values. Generated rows use `SYNTHETIC`, `PYTHON_GENERATED` and `PENDING`. Report any future prototype scores as synthetic-data results. Use a new output path for each export.
+
+The review command writes the full comparison sample, its blind variant, a private review key, and a proposed split with class-support counts. Share the blind CSV and the rubric for the reviewer's first pass. Read the proposed [rubric](docs/response-ml/response-rubric-v0.1-draft.md) and [evaluation plan](docs/response-ml/evaluation-plan-v1.2.md) before approving labels or starting training.
+
+See the [34-column data dictionary](docs/response-ml/data-dictionary.md), [generated sample rows](docs/response-ml/example-synthetic.csv), and [labeling guide](docs/response-ml/labeling-guide.md). Keep generated files and real evidence under the Git-ignored `.response-ml` folder.
+
+### Recheck the ChatGPT scenario fixtures
+
+The 23 pairs in `integration_input/Module2` and `integration_input/Module3` are ChatGPT-generated scenario fixtures. The batch manifest identifies them as `SYNTHETIC` and `CHATGPT_GENERATED`. Their collection output stays separate from the seeded Python dataset and preserves blank session, experiment, and scenario IDs. Use the fixtures for scenario development, labeling practice and integration checks.
+
+```powershell
+& $python -m response_ml collect --manifest .response-ml/upstream-23.manifest.json --output-dir .response-ml/chatgpt-rerun --csv-name collected_dataset.csv
+& $python -m response_ml validate .response-ml/chatgpt-rerun/collected_dataset.csv
+```
+
+### Collect paired JSON from the research group
+
+1. Ask Module 2 and Module 3 for the original structured exports, shared observation and session IDs, experiment ID, and observed timestamps with UTC offsets. Save the original files under `.response-ml/actual-inputs`. Keep security-sensitive evidence and experimental outcome files in controlled storage.
+2. Copy the [example manifest](docs/response-ml/collection-manifest.example.json) into that folder as `manifest.json`. Use one entry per pair. Set `data_source` to `CONTROLLED_EXPERIMENT` for verified lab or simulator observations, `REAL_TESTBED` for verified testbed observations, or `UNCONFIRMED` when the source is unknown. Leave generation provenance blank. Leave unreported session, experiment, or scenario IDs blank for unconfirmed data. File paths are relative to the manifest. If the Module 2 timestamp lacks an offset, supply the collector-confirmed `naive_timestamp_offset` for that entry, such as `+05:30`. Optional `outcome_ref` points to a separate outcome record for the reviewer.
+3. Run the collector and validator using a new output directory:
+
+```powershell
+& $python -m response_ml collect --manifest .response-ml/actual-inputs/manifest.json --output-dir .response-ml/actual-exp-001
+& $python -m response_ml validate .response-ml/actual-exp-001/observations.csv
+```
+
+The output includes `observations.csv` and `evidence-index.json`. The index records the file paths, checksums and pairing method. Keep it with the manifest and original files so you can trace a row back to its evidence. The collector uses the existing file parser and creates research files without writing to the incident database.
+
+Check the two representative exports currently in `integration_input`:
+
+```powershell
+& $python -m response_ml inspect-pair "integration_input/Module2/Module_2 Output_1.json" "integration_input/Module3/Module_3 Output_1.json" --expect-observation-id OBS00123 --expect-risk-score 80 --expect-risk-level CRITICAL --expect-response PREPARE_BACKUP_CHANNEL
+```
+
+### Configure the research mode and run checks
+
+Set `MODULE4_RESPONSE_MODE` in the same PowerShell session before starting the backend. The default is `RULE_BASED` and retains the original response JSON shape. `SHADOW` records the 15 pre-decision features with `WAITING_FOR_MODEL` in the response and audit snapshot. `MACHINE_LEARNING` reports `APPROVAL_REQUIRED` and keeps the contextual rule recommendation in effect. These modes prepare the interface for later phases. The [proposed safety policy](docs/response-ml/safety-policy.md) is for review.
+
+```powershell
+$env:MODULE4_RESPONSE_MODE = "SHADOW"
+Push-Location backend
+& $python -m uvicorn main:app --host 127.0.0.1 --port 8000
+Pop-Location
+```
+
+For regression tests, use the project root and run `& $python -m pytest backend/tests -q`. Tests use disposable SQLite files.

@@ -32,15 +32,14 @@ from datetime import datetime
 
 from models.defense import EvaluateRequest, EvaluateResponse
 from adapters import module1_adapter, module2_adapter, module3_adapter
+from response_ml.modes import ResponseMode, read_response_mode
 from services import (
-    correlation_service,
-    risk_service,
-    conflict_service,
-    confidence_service,
     response_service,
     explanation_service,
     audit_service,
 )
+from services.evidence_service import assess_evidence
+from services.response_selection_service import select_research_response
 
 
 def run_pipeline(request: EvaluateRequest, integration_metadata: dict | None = None) -> EvaluateResponse:
@@ -49,45 +48,30 @@ def run_pipeline(request: EvaluateRequest, integration_metadata: dict | None = N
     Each stage is executed in order. All intermediate results are
     captured for audit logging and explainability output.
     """
+    mode = read_response_mode()
     timestamp = datetime.now().isoformat()
     incident_id = audit_service.get_next_incident_id()
 
-    # ── STAGE 1: DATA NORMALIZATION (via adapters) ────────────────────────────
-    # Adapters normalize and validate each module's output.
-    # If a module is unavailable, adapters return safe defaults.
-    rf = module1_adapter.adapt(request.rf_context.model_dump())
-    ti = module2_adapter.adapt(request.threat_intelligence.model_dump())
-    sc = module3_adapter.adapt(request.secure_communication.model_dump())
-
+    # Share normalization and deterministic assessment with offline collection.
+    evidence = assess_evidence(request)
+    rf, ti, sc = evidence.rf, evidence.threat, evidence.communication
+    risk_score, risk_level, risk_breakdown = evidence.risk_score, evidence.risk_level, evidence.risk_breakdown
+    correlation, conflict, confidence = evidence.correlation, evidence.conflict, evidence.confidence
     observation_id = rf.observation_id or "OBS-UNSET"
 
-    # ── STAGE 2: MULTI-SOURCE EVIDENCE CORRELATION ────────────────────────────
-    # Explicitly correlates Module 2 and Module 3 evidence.
-    # This is NOT a simple merge — it tracks agreement/disagreement.
-    correlation = correlation_service.correlate(ti, sc)
-
-    # ── STAGE 3: DYNAMIC RISK SCORING ────────────────────────────────────────
-    # Computes an explainable, config-driven risk score (0–100).
-    # All weights are loaded from config/scoring_weights.py.
-    risk_score, risk_level, risk_breakdown = risk_service.compute_risk(ti, sc)
-
-    # ── STAGE 5: CONFLICT DETECTION ──────────────────────────────────────────
-    # Detect conflicting evidence between Module 2 and Module 3.
-    # When conflict exists: confidence is reduced, response is conservative.
-    conflict = conflict_service.detect_conflict(ti, sc)
-
-    # ── STAGE 6: DECISION CONFIDENCE ─────────────────────────────────────────
-    # Assess how confident Module 4 is in its decision.
-    confidence = confidence_service.assess_confidence(ti, sc, conflict)
-
     # ── STAGE 7: RESPONSE PRIORITIZATION ─────────────────────────────────────
-    # Select response from prioritized rule table.
-    recommended_response, response_rationale, baseline_response = response_service.select_response(
+    rule_response, rule_rationale, baseline_response = response_service.select_response(
         ti, sc, risk_score, conflict
     )
+    recommended_response, response_rationale = rule_response, rule_rationale
+    response_selection = None
+    if mode != ResponseMode.RULE_BASED:
+        recommended_response, response_rationale, response_selection = select_research_response(
+            mode, evidence, rule_response, rule_rationale,
+        )
 
     # ── STAGE 8: BASELINE COMPARISON ─────────────────────────────────────────
-    baseline_vs_proposed = response_service.compare_baseline(recommended_response, baseline_response)
+    baseline_vs_proposed = response_service.compare_baseline(rule_response, baseline_response)
 
     # ── STAGE 9: EXPLAINABLE DECISION ────────────────────────────────────────
     # Build ordered list of human-readable reasons for the decision.
@@ -132,6 +116,7 @@ def run_pipeline(request: EvaluateRequest, integration_metadata: dict | None = N
         integration_status="SUCCESS" if integration_metadata else None,
         input_sources=integration_metadata or {},
         match_method=(integration_metadata or {}).get("match_method"),
+        response_selection=response_selection,
     )
 
     # ── STAGE 11: INCIDENT / AUDIT LOGGING ───────────────────────────────────

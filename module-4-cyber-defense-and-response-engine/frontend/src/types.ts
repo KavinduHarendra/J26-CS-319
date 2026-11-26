@@ -80,6 +80,45 @@ export interface CorrelationResult {
   correlation_note: string
 }
 
+export type ResponseMode = 'RULE_BASED' | 'SHADOW' | 'MACHINE_LEARNING'
+
+export interface Module4Status {
+  response_selection_mode?: ResponseMode
+}
+
+export interface ResponseSelectionMetadata {
+  configured_mode: 'SHADOW' | 'MACHINE_LEARNING'
+  effective_mode?: 'RULE_BASED' | 'MACHINE_LEARNING'
+  response_source?: 'RULE_BASED' | 'MACHINE_LEARNING' | 'SAFETY_POLICY'
+    | 'SCREENED_RULE_FALLBACK' | 'SAFETY_POLICY_FALLBACK' | 'EVIDENCE_FALLBACK'
+  rule_based_response?: string | null
+  ml_status?: 'SUCCEEDED' | 'FAILED' | null
+  ml_error_code?: string | null
+  ml_raw_response?: string | null
+  ml_screened_response?: string | null
+  ml_screening_reason?: string | null
+  ml_prediction_confidence?: number | null
+  ml_model_version?: string | null
+  ml_inference_latency_ms?: number | null
+  rule_based_disagreement?: boolean | null
+  safety_override?: boolean | null
+  safety_override_reason?: string | null
+  fallback_used?: boolean | null
+  fallback_reason?: string | null
+}
+
+export interface IncidentDetail {
+  incident_id: string
+  observation_id?: string | null
+  timestamp: string
+  risk_score: number
+  risk_level: string
+  decision_confidence?: string | null
+  recommended_response: string
+  response_rationale?: string | null
+  full_response?: string | null
+}
+
 export interface EvaluateResponse {
   incident_id: string
   observation_id: string
@@ -99,6 +138,7 @@ export interface EvaluateResponse {
   confidence_rationale: string
 
   recommended_response: string
+  response_selection?: ResponseSelectionMetadata | null
   response_status: string
   response_rationale: string
 

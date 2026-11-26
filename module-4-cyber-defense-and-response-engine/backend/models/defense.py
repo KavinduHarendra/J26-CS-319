@@ -9,11 +9,12 @@ This module defines all Pydantic models used in Module 4's own pipeline:
 """
 
 from typing import Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_serializer
 
 from models.module1 import RFContext
 from models.module2 import ThreatIntelligence
 from models.module3 import SecureCommunication
+from response_ml.modes import ResponseSelectionMetadata
 
 
 # ─── Unified Input ───────────────────────────────────────────────────────────
@@ -167,6 +168,15 @@ class EvaluateResponse(BaseModel):
     integration_status: Optional[str] = None
     input_sources: dict = Field(default_factory=dict)
     match_method: Optional[str] = None
+
+    response_selection: ResponseSelectionMetadata | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_response(self, handler):
+        data = handler(self)
+        if self.response_selection is None:
+            data.pop("response_selection", None)
+        return data
 
 
 # ─── Baseline Model ───────────────────────────────────────────────────────────
